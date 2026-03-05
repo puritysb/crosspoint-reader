@@ -284,7 +284,7 @@ bool JpegToBmpConverter::jpegFileToBmpStreamInternal(FsFile& jpegFile, Print& bm
   FloydSteinbergDitherer* fsDitherer = nullptr;
   Atkinson1BitDitherer* atkinson1BitDitherer = nullptr;
   uint32_t* rowAccum = nullptr;  // Accumulator for each output X (32-bit for larger sums)
-  uint16_t* rowCount = nullptr;  // Count of source pixels accumulated per output X
+  uint32_t* rowCount = nullptr;  // Count of source pixels accumulated per output X
 
   auto cleanupResources = [&]() {
     delete[] rowAccum;
@@ -343,7 +343,7 @@ bool JpegToBmpConverter::jpegFileToBmpStreamInternal(FsFile& jpegFile, Print& bm
 
   if (needsScaling) {
     rowAccum = new uint32_t[outWidth]();
-    rowCount = new uint16_t[outWidth]();
+    rowCount = new uint32_t[outWidth]();
     nextOutY_srcStart = scaleY_fp;  // First boundary is at scaleY_fp (source Y for outY=1)
   }
 
@@ -539,7 +539,7 @@ bool JpegToBmpConverter::jpegFileToBmpStreamInternal(FsFile& jpegFile, Print& bm
           }
           // Moving to next source row - reset accumulators
           memset(rowAccum, 0, outWidth * sizeof(uint32_t));
-          memset(rowCount, 0, outWidth * sizeof(uint16_t));
+          memset(rowCount, 0, outWidth * sizeof(uint32_t));
         }
       }
     }

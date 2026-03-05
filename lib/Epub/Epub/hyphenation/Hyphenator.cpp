@@ -59,6 +59,83 @@ std::vector<Hyphenator::BreakInfo> buildExplicitBreakInfos(const std::vector<Cod
   return breaks;
 }
 
+bool isSegmentSeparator(const uint32_t cp) { return isExplicitHyphen(cp) || isApostrophe(cp); }
+
+void appendSegmentPatternBreaks(const std::vector<CodepointInfo>& cps, const LanguageHyphenator& hyphenator,
+                                const bool includeFallback, std::vector<Hyphenator::BreakInfo>& outBreaks) {
+  size_t segStart = 0;
+
+  for (size_t i = 0; i <= cps.size(); ++i) {
+    const bool atEnd = i == cps.size();
+    const bool atSeparator = !atEnd && isSegmentSeparator(cps[i].value);
+    if (!atEnd && !atSeparator) {
+      continue;
+    }
+
+    if (i > segStart) {
+      std::vector<CodepointInfo> segment(cps.begin() + segStart, cps.begin() + i);
+      auto segIndexes = hyphenator.breakIndexes(segment);
+
+      if (includeFallback && segIndexes.empty()) {
+        const size_t minPrefix = hyphenator.minPrefix();
+        const size_t minSuffix = hyphenator.minSuffix();
+        for (size_t idx = minPrefix; idx + minSuffix <= segment.size(); ++idx) {
+          segIndexes.push_back(idx);
+        }
+      }
+
+      for (const size_t idx : segIndexes) {
+        const size_t cpIdx = segStart + idx;
+        if (cpIdx < cps.size()) {
+          outBreaks.push_back({cps[cpIdx].byteOffset, true});
+        }
+      }
+    }
+
+    segStart = i + 1;
+  }
+}
+
+void appendApostropheContractionBreaks(const std::vector<CodepointInfo>& cps,
+                                       std::vector<Hyphenator::BreakInfo>& outBreaks) {
+  size_t segmentStart = 0;
+
+  for (size_t i = 0; i < cps.size(); ++i) {
+    if (isSegmentSeparator(cps[i].value)) {
+      if (isApostrophe(cps[i].value) && i > 0 && i + 1 < cps.size() && isAlphabetic(cps[i - 1].value) &&
+          isAlphabetic(cps[i + 1].value)) {
+        size_t leftPrefixLen = 0;
+        for (size_t j = segmentStart; j < i; ++j) {
+          if (isAlphabetic(cps[j].value)) {
+            ++leftPrefixLen;
+          }
+        }
+
+        // Avoid stranding very short clitics like "l'" or "d'" at line end.
+        if (leftPrefixLen >= 3) {
+          outBreaks.push_back({cps[i + 1].byteOffset, false});
+        }
+      }
+      segmentStart = i + 1;
+    }
+  }
+}
+
+void sortAndDedupeBreakInfos(std::vector<Hyphenator::BreakInfo>& infos) {
+  std::sort(infos.begin(), infos.end(), [](const Hyphenator::BreakInfo& a, const Hyphenator::BreakInfo& b) {
+    if (a.byteOffset != b.byteOffset) {
+      return a.byteOffset < b.byteOffset;
+    }
+    return a.requiresInsertedHyphen < b.requiresInsertedHyphen;
+  });
+
+  infos.erase(std::unique(infos.begin(), infos.end(),
+                          [](const Hyphenator::BreakInfo& a, const Hyphenator::BreakInfo& b) {
+                            return a.byteOffset == b.byteOffset && a.requiresInsertedHyphen == b.requiresInsertedHyphen;
+                          }),
+              infos.end());
+}
+
 }  // namespace
 
 std::vector<Hyphenator::BreakInfo> Hyphenator::breakOffsets(const std::string& word, const bool includeFallback) {
@@ -89,29 +166,32 @@ std::vector<Hyphenator::BreakInfo> Hyphenator::breakOffsets(const std::string& w
     //                                            @16 Satellitensys|tems  (+hyphen)
     //   Result: 6 sorted break points; the line-breaker picks the widest prefix that fits.
     if (hyphenator) {
-      size_t segStart = 0;
-      for (size_t i = 0; i <= cps.size(); ++i) {
-        const bool atEnd = (i == cps.size());
-        const bool atHyphen = !atEnd && isExplicitHyphen(cps[i].value);
-        if (atEnd || atHyphen) {
-          if (i > segStart) {
-            std::vector<CodepointInfo> segment(cps.begin() + segStart, cps.begin() + i);
-            auto segIndexes = hyphenator->breakIndexes(segment);
-            for (const size_t idx : segIndexes) {
-              const size_t cpIdx = segStart + idx;
-              if (cpIdx < cps.size()) {
-                explicitBreakInfos.push_back({cps[cpIdx].byteOffset, true});
-              }
-            }
-          }
-          segStart = i + 1;
-        }
-      }
+      appendSegmentPatternBreaks(cps, *hyphenator, /*includeFallback=*/false, explicitBreakInfos);
       // Merge explicit and pattern breaks into ascending byte-offset order.
-      std::sort(explicitBreakInfos.begin(), explicitBreakInfos.end(),
-                [](const BreakInfo& a, const BreakInfo& b) { return a.byteOffset < b.byteOffset; });
+      sortAndDedupeBreakInfos(explicitBreakInfos);
     }
     return explicitBreakInfos;
+  }
+
+  // Apostrophe-like separators split compounds into alphabetic segments; run Liang on each segment.
+  // This allows words like "all'improvviso" to hyphenate within "improvviso" instead of becoming
+  // completely unsplittable due to the apostrophe punctuation.
+  bool hasApostropheLikeSeparator = false;
+  for (const auto& cp : cps) {
+    if (isApostrophe(cp.value)) {
+      hasApostropheLikeSeparator = true;
+      break;
+    }
+  }
+
+  if (hyphenator && hasApostropheLikeSeparator) {
+    std::vector<BreakInfo> segmentedBreaks;
+    appendSegmentPatternBreaks(cps, *hyphenator, includeFallback, segmentedBreaks);
+    appendApostropheContractionBreaks(cps, segmentedBreaks);
+    if (!segmentedBreaks.empty()) {
+      sortAndDedupeBreakInfos(segmentedBreaks);
+      return segmentedBreaks;
+    }
   }
 
   // Ask language hyphenator for legal break points.

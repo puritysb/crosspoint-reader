@@ -10,6 +10,63 @@ namespace {
 constexpr char MEDIA_TYPE_NCX[] = "application/x-dtbncx+xml";
 constexpr char MEDIA_TYPE_CSS[] = "text/css";
 constexpr char itemCacheFile[] = "/.items.bin";
+
+// Strip HTML tags and collapse whitespace from a description string.
+// Expat already decodes XML entities (&lt; → <), so we see raw angle brackets.
+std::string stripHtml(const std::string& html) {
+  std::string result;
+  result.reserve(html.size());
+  bool inTag = false;
+  for (size_t i = 0; i < html.size(); ++i) {
+    const char c = html[i];
+    if (c == '<') {
+      inTag = true;
+      // Ensure words don't merge when a tag is removed
+      if (!result.empty() && result.back() != ' ') result += ' ';
+    } else if (c == '>') {
+      inTag = false;
+    } else if (!inTag) {
+      if (c == '&') {
+        // Decode common HTML entities not covered by Expat
+        if (html.compare(i, 6, "&nbsp;") == 0) {
+          result += ' ';
+          i += 5;
+        } else if (html.compare(i, 7, "&ndash;") == 0) {
+          result += '-';
+          i += 6;
+        } else if (html.compare(i, 7, "&mdash;") == 0) {
+          result += '-';
+          i += 6;
+        } else if (html.compare(i, 8, "&hellip;") == 0) {
+          result += "...";
+          i += 7;
+        } else
+          result += c;
+      } else if (c == '\n' || c == '\r' || c == '\t') {
+        if (!result.empty() && result.back() != ' ') result += ' ';
+      } else {
+        result += c;
+      }
+    }
+  }
+  // Collapse consecutive spaces and trim trailing whitespace
+  std::string out;
+  out.reserve(result.size());
+  bool lastSpace = false;
+  for (char c : result) {
+    if (c == ' ') {
+      if (!lastSpace && !out.empty()) {
+        out += ' ';
+        lastSpace = true;
+      }
+    } else {
+      out += c;
+      lastSpace = false;
+    }
+  }
+  while (!out.empty() && out.back() == ' ') out.pop_back();
+  return out;
+}
 }  // namespace
 
 bool ContentOpfParser::setup() {
@@ -117,6 +174,11 @@ void XMLCALL ContentOpfParser::startElement(void* userData, const XML_Char* name
     return;
   }
 
+  if (self->state == IN_METADATA && strcmp(name, "dc:description") == 0) {
+    self->state = IN_BOOK_DESCRIPTION;
+    return;
+  }
+
   if (self->state == IN_PACKAGE && (strcmp(name, "manifest") == 0 || strcmp(name, "opf:manifest") == 0)) {
     self->state = IN_MANIFEST;
     if (!Storage.openFileForWrite("COF", self->cachePath + itemCacheFile, self->tempItemStore)) {
@@ -153,19 +215,25 @@ void XMLCALL ContentOpfParser::startElement(void* userData, const XML_Char* name
   }
 
   if (self->state == IN_METADATA && (strcmp(name, "meta") == 0 || strcmp(name, "opf:meta") == 0)) {
-    bool isCover = false;
-    std::string coverItemId;
+    const char* metaName = nullptr;
+    const char* metaContent = nullptr;
 
     for (int i = 0; atts[i]; i += 2) {
-      if (strcmp(atts[i], "name") == 0 && strcmp(atts[i + 1], "cover") == 0) {
-        isCover = true;
+      if (strcmp(atts[i], "name") == 0) {
+        metaName = atts[i + 1];
       } else if (strcmp(atts[i], "content") == 0) {
-        coverItemId = atts[i + 1];
+        metaContent = atts[i + 1];
       }
     }
 
-    if (isCover) {
-      self->coverItemId = coverItemId;
+    if (metaName && metaContent) {
+      if (strcmp(metaName, "cover") == 0) {
+        self->coverItemId = metaContent;
+      } else if (strcmp(metaName, "calibre:series") == 0 && self->series.empty()) {
+        self->series = metaContent;
+      } else if (strcmp(metaName, "calibre:series_index") == 0 && self->seriesIndex.empty()) {
+        self->seriesIndex = metaContent;
+      }
     }
     return;
   }
@@ -338,6 +406,11 @@ void XMLCALL ContentOpfParser::characterData(void* userData, const XML_Char* s, 
     self->language.append(s, len);
     return;
   }
+
+  if (self->state == IN_BOOK_DESCRIPTION) {
+    self->description.append(s, len);
+    return;
+  }
 }
 
 void XMLCALL ContentOpfParser::endElement(void* userData, const XML_Char* name) {
@@ -373,6 +446,12 @@ void XMLCALL ContentOpfParser::endElement(void* userData, const XML_Char* name) 
   }
 
   if (self->state == IN_BOOK_LANGUAGE && strcmp(name, "dc:language") == 0) {
+    self->state = IN_METADATA;
+    return;
+  }
+
+  if (self->state == IN_BOOK_DESCRIPTION && strcmp(name, "dc:description") == 0) {
+    self->description = stripHtml(self->description);
     self->state = IN_METADATA;
     return;
   }

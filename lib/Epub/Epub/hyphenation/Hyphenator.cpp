@@ -143,7 +143,7 @@ void sortAndDedupeBreakInfos(std::vector<Hyphenator::BreakInfo>& infos) {
 
   infos.erase(std::unique(infos.begin(), infos.end(),
                           [](const Hyphenator::BreakInfo& a, const Hyphenator::BreakInfo& b) {
-                            return a.byteOffset == b.byteOffset && a.requiresInsertedHyphen == b.requiresInsertedHyphen;
+                            return a.byteOffset == b.byteOffset;
                           }),
               infos.end());
 }

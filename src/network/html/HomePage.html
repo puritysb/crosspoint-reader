@@ -136,13 +136,13 @@
       </p>
     </div>
   <script>
-    function formatBytes(bytes) {
-      if (!bytes) return 'N/A';
-      const units = ['B', 'KB', 'MB', 'GB'];
-      let val = bytes, i = 0;
-      while (val >= 1024 && i < units.length - 1) { val /= 1024; i++; }
-      return parseFloat(val.toFixed(2)).toLocaleString() + ' ' + units[i];
-    }
+      function formatBytes(bytes) {
+        if (bytes == null) return 'N/A';
+        const units = ['B', 'KB', 'MB', 'GB'];
+        let val = bytes, i = 0;
+        while (val >= 1024 && i < units.length - 1) { val /= 1024; i++; }
+        return parseFloat(val.toFixed(2)).toLocaleString() + ' ' + units[i];
+      }
 
     async function fetchStatus() {
       try {

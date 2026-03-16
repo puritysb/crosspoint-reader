@@ -4,12 +4,16 @@
 #include <FS.h>  // need to be included before SdFat.h for compatibility with FS.h's File class
 #include <Logging.h>
 #include <SDCardManager.h>
+#include <SdFat.h>
 
 #include <cassert>
 
 #define SDCard SDCardManager::getInstance()
 
 HalStorage HalStorage::instance;
+
+// Local SdFat instance for volume stats only
+static SdFat halStorageSdFat;
 
 HalStorage::HalStorage() {
   storageMutex = xSemaphoreCreateMutex();
@@ -56,21 +60,25 @@ bool HalStorage::ensureDirectoryExists(const char* path) { HAL_STORAGE_WRAPPED_C
 
 uint64_t HalStorage::sdTotalBytes() const {
   StorageLock lock;
-  if (!SDCard.ready()) return 0;
-  const auto* vol = FsVolume::cwv();
+  // Try to initialize if not already
+  if (!halStorageSdFat.begin()) return 0;
+  auto* vol = halStorageSdFat.vol();
   if (!vol) return 0;
   return (uint64_t)vol->clusterCount() * vol->bytesPerCluster();
 }
 
 uint64_t HalStorage::sdUsedBytes() const {
   StorageLock lock;
-  if (!SDCard.ready()) return 0;
-  const auto* vol = FsVolume::cwv();
+  if (!halStorageSdFat.begin()) return 0;
+  auto* vol = halStorageSdFat.vol();
   if (!vol) return 0;
   const int32_t freeClusters = vol->freeClusterCount();
   if (freeClusters < 0) return 0;  // error reading FAT
+  const uint64_t clusterCount = vol->clusterCount();
+  uint64_t cappedFreeClusters = freeClusters < 0 ? 0 : (uint64_t)freeClusters;
+  if (cappedFreeClusters > clusterCount) cappedFreeClusters = clusterCount;
   const uint64_t bytesPerCluster = vol->bytesPerCluster();
-  return ((uint64_t)vol->clusterCount() - freeClusters) * bytesPerCluster;
+  return (clusterCount - cappedFreeClusters) * bytesPerCluster;
 }
 
 class HalFile::Impl {

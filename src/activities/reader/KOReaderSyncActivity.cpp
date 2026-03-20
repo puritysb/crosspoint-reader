@@ -203,6 +203,7 @@ void KOReaderSyncActivity::onEnter() {
 
   // Check if already connected (e.g. from settings page auth)
   if (WiFi.status() == WL_CONNECTED) {
+    LOG_DBG("KOSync", "Already connected to WiFi");
     onWifiSelectionComplete(true);
     return;
   }

@@ -19,6 +19,7 @@ RTC_NOINIT_ATTR static uint32_t rtcClockMagic;
 RTC_NOINIT_ATTR static uint32_t rtcClockFlags;
 RTC_NOINIT_ATTR static time_t rtcEpoch;       // last-known unix epoch
 RTC_NOINIT_ATTR static uint64_t rtcLpTimeUs;  // esp_clk_rtc_time() at capture
+RTC_NOINIT_ATTR static uint32_t rtcSlowCal;   // esp_clk_slowclk_cal_get() at capture
 
 static bool clockApproximate = true;
 
@@ -47,13 +48,26 @@ static constexpr TimeZoneEntry TIMEZONES[] = {
 
 // ---- NVS helpers ----------------------------------------------------------
 
+// If the last NTP sync is older than this, treat a cold-boot restore as
+// unsynced rather than showing a potentially very wrong time.
+static constexpr int64_t STALE_THRESHOLD_S = 72 * 3600;  // 72 hours
+
 static constexpr char NVS_NAMESPACE[] = "halclock";
 static constexpr char NVS_KEY[] = "epoch";
+static constexpr char NVS_SYNC_KEY[] = "lastsync";
 
 static void nvsWrite(time_t epoch) {
   Preferences prefs;
   if (prefs.begin(NVS_NAMESPACE, false)) {
     prefs.putLong64(NVS_KEY, (int64_t)epoch);
+    prefs.end();
+  }
+}
+
+static void nvsWriteSyncTime(time_t syncEpoch) {
+  Preferences prefs;
+  if (prefs.begin(NVS_NAMESPACE, false)) {
+    prefs.putLong64(NVS_SYNC_KEY, (int64_t)syncEpoch);
     prefs.end();
   }
 }
@@ -66,6 +80,16 @@ static time_t nvsRead() {
     prefs.end();
   }
   return epoch;
+}
+
+static time_t nvsReadSyncTime() {
+  Preferences prefs;
+  time_t syncEpoch = 0;
+  if (prefs.begin(NVS_NAMESPACE, true)) {
+    syncEpoch = (time_t)prefs.getLong64(NVS_SYNC_KEY, 0);
+    prefs.end();
+  }
+  return syncEpoch;
 }
 
 // ---- internal helpers -----------------------------------------------------
@@ -82,6 +106,7 @@ static bool rtcValid() { return rtcClockMagic == CLOCK_RTC_MAGIC && rtcEpoch > 0
 static void capture(bool lpValid) {
   rtcEpoch = time(nullptr);
   rtcLpTimeUs = esp_clk_rtc_time();
+  rtcSlowCal = esp_clk_slowclk_cal_get();
   rtcClockMagic = CLOCK_RTC_MAGIC;
   rtcClockFlags = lpValid ? CLOCK_RTC_FLAG_LP_VALID : 0;
   nvsWrite(rtcEpoch);
@@ -120,6 +145,7 @@ bool syncNtp() {
   }
 
   capture(false);
+  nvsWriteSyncTime(rtcEpoch);
   clockApproximate = false;
   LOG_INF("CLK", "NTP synced, epoch %lld", (long long)rtcEpoch);
   return true;
@@ -138,15 +164,30 @@ void restore() {
   if (rtcValid() && lpValid) {
     // RTC memory survived — we woke from deep sleep.
     // Use the LP timer to compute how much time elapsed during sleep.
+    // Apply calibration correction: the slow-clock frequency may have
+    // drifted (temperature) between when we captured and now.  The fresh
+    // boot-time calibration (calNow) is our best estimate of the actual
+    // frequency during sleep.
     uint64_t lpNow = esp_clk_rtc_time();
     time_t estimated = rtcEpoch;
     if (lpNow > rtcLpTimeUs) {
-      estimated += (time_t)((lpNow - rtcLpTimeUs) / 1000000LL);
+      uint32_t calNow = esp_clk_slowclk_cal_get();
+      uint64_t elapsedUs;
+      if (rtcSlowCal != 0 && calNow != 0) {
+        // rtcLpTimeUs was computed with rtcSlowCal; convert it to the
+        // current calibration basis so the subtraction is consistent.
+        uint64_t lpThenCorrected = (uint64_t)((double)rtcLpTimeUs * calNow / rtcSlowCal);
+        elapsedUs = lpNow - lpThenCorrected;
+      } else {
+        elapsedUs = lpNow - rtcLpTimeUs;
+      }
+      estimated += (time_t)(elapsedUs / 1000000LL);
     }
     setSystemClock(estimated);
     // Re-capture with current LP baseline
     rtcEpoch = estimated;
     rtcLpTimeUs = lpNow;
+    rtcSlowCal = esp_clk_slowclk_cal_get();
     clockApproximate = true;
     LOG_INF("CLK", "Restored from RTC + LP timer, epoch %lld", (long long)estimated);
     return;
@@ -155,9 +196,16 @@ void restore() {
   // Cold boot — try NVS.  No elapsed correction possible.
   time_t epoch = nvsRead();
   if (epoch > 0) {
+    time_t lastSync = nvsReadSyncTime();
+    if (lastSync > 0 && (epoch - lastSync) > STALE_THRESHOLD_S) {
+      LOG_ERR("CLK", "NVS epoch %lld is stale (last NTP sync %lld, %lld h ago), discarding", (long long)epoch,
+              (long long)lastSync, (long long)((epoch - lastSync) / 3600));
+      return;
+    }
     setSystemClock(epoch);
     rtcEpoch = epoch;
     rtcLpTimeUs = esp_clk_rtc_time();
+    rtcSlowCal = esp_clk_slowclk_cal_get();
     rtcClockMagic = CLOCK_RTC_MAGIC;
     rtcClockFlags = 0;
     clockApproximate = true;

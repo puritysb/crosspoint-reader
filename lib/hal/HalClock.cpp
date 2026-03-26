@@ -48,9 +48,7 @@ static void setSystemClock(time_t epoch) {
   settimeofday(&tv, nullptr);
 }
 
-static bool rtcValid() {
-  return rtcClockMagic == CLOCK_RTC_MAGIC && rtcEpoch > 0;
-}
+static bool rtcValid() { return rtcClockMagic == CLOCK_RTC_MAGIC && rtcEpoch > 0; }
 
 /// Capture current time + LP timer into RTC memory, and epoch into NVS.
 static void capture() {
@@ -140,9 +138,7 @@ bool isSynced() {
   return time(nullptr) > 1577836800;  // > 2020-01-01
 }
 
-bool isApproximate() {
-  return clockApproximate;
-}
+bool isApproximate() { return clockApproximate; }
 
 void formatTime(char* buf, size_t bufSize, bool use24h) {
   if (!isSynced()) {

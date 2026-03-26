@@ -2,13 +2,12 @@
 
 #include <GfxRenderer.h>
 #include <HalClock.h>
-
-#include "CrossPointSettings.h"
 #include <I18n.h>
 #include <Logging.h>
 #include <WiFi.h>
 #include <esp_sntp.h>
 
+#include "CrossPointSettings.h"
 #include "MappedInputManager.h"
 #include "activities/network/WifiSelectionActivity.h"
 #include "components/UITheme.h"

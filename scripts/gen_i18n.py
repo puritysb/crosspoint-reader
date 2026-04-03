@@ -471,6 +471,10 @@ def generate_keys_header(
     lines.append("")
 
     # Extern declarations
+    lines.append("// Language codes (defined in I18nStrings.cpp)")
+    lines.append("extern const char* const LANGUAGE_CODES[];")
+    lines.append("")
+
     lines.append("// Language display names (defined in I18nStrings.cpp)")
     lines.append("extern const char* const LANGUAGE_NAMES[];")
     lines.append("")
@@ -591,6 +595,14 @@ def generate_strings_cpp(
         "#include <cstddef>",
         "",
     ]
+
+    # LANGUAGE_NAMES array
+    lines.append("// Language codes")
+    lines.append("const char* const LANGUAGE_CODES[] = {")
+    for code in languages:
+        _append_string_entry(lines, code)
+    lines.append("};")
+    lines.append("")
 
     # LANGUAGE_NAMES array
     lines.append("// Language display names")

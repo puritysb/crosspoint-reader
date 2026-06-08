@@ -192,7 +192,13 @@ HalGPIO::DeviceType detectDeviceTypeWithFingerprint() {
 
 void HalGPIO::begin() {
   inputMgr.begin();
+#if !(defined(FREEINK_DEVICE_M5PAPER) && FREEINK_DEVICE_M5PAPER)
+  // Claim the shared SPI bus with the X4/X3 display+SD pins. On M5Paper the SDK's
+  // IT8951 driver and SDCardManager each bring up SPI from BoardConfig::ACTIVE
+  // pins; pre-claiming VSPI here would stick (SPIClass::begin early-returns if the
+  // bus is already started) and leave the SD card on the wrong pins.
   SPI.begin(EPD_SCLK, SPI_MISO, EPD_MOSI, EPD_CS);
+#endif
 
   _deviceType = detectDeviceTypeWithFingerprint();
 
@@ -232,12 +238,29 @@ void HalGPIO::startDeepSleep() {
     inputMgr.update();
   }
   // Arm the wakeup trigger *after* the button is released
+#if SOC_PM_SUPPORT_EXT1_WAKEUP
+  // Xtensa (classic ESP32 / S3): GPIO deep-sleep wake is via RTC ext1.
+  esp_sleep_enable_ext1_wakeup(1ULL << InputManager::POWER_BUTTON_PIN, ESP_EXT1_WAKEUP_ALL_LOW);
+#else
+  // RISC-V (C3): direct GPIO deep-sleep wakeup source.
   esp_deep_sleep_enable_gpio_wakeup(1ULL << InputManager::POWER_BUTTON_PIN, ESP_GPIO_WAKEUP_GPIO_LOW);
+#endif
   // Enter Deep Sleep
   esp_deep_sleep_start();
 }
 
 void HalGPIO::verifyPowerButtonWakeup(uint16_t requiredDurationMs, bool shortPressAllowed) {
+  if (BoardConfig::ACTIVE.input.power < 0) {
+    // No readable power-button input pin: can't verify a hold, so don't sleep.
+    return;
+  }
+#if defined(FREEINK_DEVICE_M5PAPER) && FREEINK_DEVICE_M5PAPER
+  // M5Paper: power-on is a hardware latch and the "power button" is the rotary
+  // push (G38), shared with Confirm. A USB/flash cold boot is indistinguishable
+  // from an intentional power-on hold here, so skip the X4-style anti-accidental-
+  // wake check and always boot. G38 still serves as the deep-sleep wake source.
+  return;
+#endif
   if (shortPressAllowed) {
     // Fast path - no duration check needed
     return;

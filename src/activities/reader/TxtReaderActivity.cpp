@@ -72,7 +72,13 @@ void TxtReaderActivity::loop() {
     return;
   }
 
-  const auto [prevTriggered, nextTriggered, fromTilt] = ReaderUtils::detectPageTurn(mappedInput);
+  // Touch reader controls mirror the side page buttons (left third = back,
+  // right third = forward). No-op on Xteink / when the setting is off.
+  const auto touch = ReaderUtils::detectTouchPageTurn(renderer);
+
+  auto [prevTriggered, nextTriggered, fromTilt] = ReaderUtils::detectPageTurn(mappedInput);
+  prevTriggered = prevTriggered || touch.prev;
+  nextTriggered = nextTriggered || touch.next;
   if (!prevTriggered && !nextTriggered) {
     return;
   }

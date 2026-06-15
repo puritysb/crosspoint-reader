@@ -1,6 +1,7 @@
 #pragma once
 
 #include <HalClock.h>
+#include <HalGPIO.h>
 #include <HalTiltSensor.h>
 #include <I18n.h>
 #include <SdCardFontRegistry.h>
@@ -252,6 +253,26 @@ inline std::vector<SettingInfo> getSettingsList(const SdCardFontRegistry* regist
         SettingInfo::Toggle(StrId::STR_CLOCK_SYNCED, &CrossPointSettings::clockHasBeenSynced, "clockHasBeenSynced",
                             StrId::STR_CUSTOMISE_STATUS_BAR),
     };
+    // The sunlight fading fix targets the Xteink X3/X4 transflective panel, so
+    // it only appears on those devices. Every other (touch) device instead gets
+    // the touch reader controls toggle (tap page back/forward + press-and-hold,
+    // mirroring the physical buttons). Keyed off the board identity
+    // (gpio.isXteinkDevice()), not gpio.hasTouch(), so the reader runtime gate
+    // and this visibility gate share one source of truth.
+    if (!gpio.isXteinkDevice()) {
+      v.erase(std::remove_if(v.begin(), v.end(),
+                             [](const SettingInfo& s) { return s.nameId == StrId::STR_SUNLIGHT_FADING_FIX; }),
+              v.end());
+      for (auto it = v.begin(); it != v.end(); ++it) {
+        if (it->nameId == StrId::STR_SIDE_BTN_LAYOUT) {
+          v.insert(it, SettingInfo::Toggle(StrId::STR_TOUCH_READER_CONTROLS,
+                                           &CrossPointSettings::touchReaderControls, "touchReaderControls",
+                                           StrId::STR_CAT_CONTROLS));
+          break;
+        }
+      }
+    }
+
     // Only show tilt page turn setting when the QMI8658 IMU is present (X3)
     if (halTiltSensor.isAvailable()) {
       // Insert after the short power button setting (end of Controls section)

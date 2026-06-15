@@ -2,6 +2,7 @@
 
 #include <CrossPointSettings.h>
 #include <GfxRenderer.h>
+#include <HalGPIO.h>
 #include <HalTiltSensor.h>
 #include <Logging.h>
 
@@ -59,6 +60,40 @@ inline PageTurnResult detectPageTurn(const MappedInputManager& input) {
                                           : (input.wasReleased(MappedInputManager::Button::PageForward) || powerTurn ||
                                              input.wasReleased(nextButton)));
   return {prev, next, tiltPrev || tiltNext};
+}
+
+// Touch reader controls: a tap on the left third of the (oriented) screen turns
+// back a page, the right third turns forward, mirroring the side page buttons.
+// heldMs carries the contact duration so callers can apply the same long-press
+// behavior (chapter skip / orientation change) as the buttons. The center column
+// is left for the menu/Back gesture handled by each reader. Gated off the Xteink
+// devices (no touch) and behind the touchReaderControls setting; returns all-false
+// otherwise, so non-touch readers pay a single branch.
+struct TouchPageTurn {
+  bool prev;
+  bool next;
+  unsigned long heldMs;
+};
+
+inline TouchPageTurn detectTouchPageTurn(GfxRenderer& renderer) {
+  TouchPageTurn result{false, false, 0};
+  if (gpio.isXteinkDevice() || !SETTINGS.touchReaderControls) {
+    return result;
+  }
+  float nx = 0.0f, ny = 0.0f;
+  if (!gpio.wasTouchTap(nx, ny)) {
+    return result;
+  }
+  int lx = 0, ly = 0;
+  renderer.tapToLogical(nx, ny, lx, ly);
+  const int third = renderer.getScreenWidth() / 3;
+  if (lx < third) {
+    result.prev = true;
+  } else if (lx >= 2 * third) {
+    result.next = true;
+  }
+  result.heldMs = gpio.lastTouchHeldMs();
+  return result;
 }
 
 inline void displayWithRefreshCycle(const GfxRenderer& renderer, int& pagesUntilFullRefresh) {

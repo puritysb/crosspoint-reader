@@ -251,6 +251,11 @@ unsigned long HalGPIO::lastTouchHeldMs() const { return inputMgr.lastTouchHeldMs
 
 bool HalGPIO::hasTouch() const { return inputMgr.hasTouch(); }
 
+bool HalGPIO::isXteinkDevice() const {
+  const auto board = BoardConfig::ACTIVE.board;
+  return board == BoardConfig::Board::XteinkX3 || board == BoardConfig::Board::XteinkX4;
+}
+
 void HalGPIO::startDeepSleep() {
   // Ensure that the power button has been released to avoid immediately turning back on if you're holding it
   while (inputMgr.isPressed(BTN_POWER)) {

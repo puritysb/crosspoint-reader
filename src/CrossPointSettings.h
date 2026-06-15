@@ -230,6 +230,9 @@ class CrossPointSettings {
   uint8_t uiTheme = LYRA;
   // Sunlight fading compensation
   uint8_t fadingFix = 0;
+  // Touch reader controls: tap zones for page back/forward + press-and-hold,
+  // mirroring the physical buttons. Touch devices only (hidden elsewhere).
+  uint8_t touchReaderControls = 1;
   // Power button return from footnotes (1 = enabled, 0 = disabled)
   uint8_t pwrBtnFootnoteBack = 1;
   // Use book's embedded CSS styles for EPUB rendering (1 = enabled, 0 = disabled)

@@ -202,12 +202,22 @@ void HalGPIO::begin() {
   SPI.begin(EPD_SCLK, SPI_MISO, EPD_MOSI, EPD_CS);
 #endif
 
+#if FREEINK_MCU_C3
   _deviceType = detectDeviceTypeWithFingerprint();
 
   if (deviceIsX4()) {
     pinMode(BAT_GPIO0, INPUT);
     pinMode(UART0_RXD, INPUT);
   }
+#else
+  // Non-C3 boards (S3/ESP32) are single-device builds; their pins, panel, and
+  // battery backend all come from BoardConfig::ACTIVE. The X3/X4 fingerprint probe
+  // targets Xteink C3 hardware and drives Wire on X3_I2C_SDA/SCL (GPIO20/0) — which
+  // collides with this board's own I2C (e.g. Sticky's BQ27220 gauge shares GPIO0)
+  // and reconfigures strapping pins. Skip it; _deviceType stays X4 ("not X3"),
+  // the correct non-X3 branch for every deviceIsX3() consumer.
+  _deviceType = DeviceType::X4;
+#endif
 }
 
 void HalGPIO::update() {

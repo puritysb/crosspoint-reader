@@ -907,10 +907,9 @@ void GfxRenderer::drawIcon(const uint8_t bitmap[], const int x, const int y, con
 }
 
 void GfxRenderer::drawIcon(const freeink::Icon& icon, const int x, const int y, const bool black) const {
-  // Orientation-correct blit: the bits are stored un-rotated, so each black pixel
-  // goes through drawPixel (which applies the current orientation transform). The
-  // legacy uint8_t* overload above pre-rotates and is locked to one orientation;
-  // freeink::Icon assets are correct in every orientation.
+  // Bits are un-rotated, so each drawn pixel goes through drawPixel (which applies
+  // the orientation transform) — correct in every orientation, unlike the legacy
+  // uint8_t* overload that pre-rotates for one orientation.
   const int rowBytes = (icon.w + 7) / 8;
   for (int row = 0; row < icon.h; ++row) {
     const uint8_t* r = icon.bits + static_cast<int>(row) * rowBytes;
@@ -1574,9 +1573,8 @@ int GfxRenderer::getTextHeight(const int fontId) const {
   return fontIt->second.getData(EpdFontFamily::REGULAR)->ascender;
 }
 
-// Height of a reference glyph above the baseline (glyph->top). 'H' gives the real
-// cap height, 'x' the x-height — the actual visible extents of the font, for
-// vertical centering that follows the font instead of a guessed ascender fraction.
+// Height of a reference glyph above the baseline (glyph->top): 'H' gives the real
+// cap height, the actual visible font extent for vertical centering.
 int GfxRenderer::glyphTop(const int fontId, const uint32_t cp) const {
   const auto fontIt = fontMap.find(remapUiFont(fontId));
   if (fontIt == fontMap.end()) return 0;
@@ -1585,15 +1583,11 @@ int GfxRenderer::glyphTop(const int fontId, const uint32_t cp) const {
 }
 
 int GfxRenderer::getFontCapHeight(const int fontId) const { return glyphTop(fontId, 'H'); }
-int GfxRenderer::getFontXHeight(const int fontId) const { return glyphTop(fontId, 'x'); }
 
 int GfxRenderer::getTextVisualCenterOffset(const int fontId) const {
-  // Distance from drawText's y (text top) down to the text's optical middle. The
-  // baseline is at y + ascender; the capitals reach capHeight above it, so the cap
-  // middle is ascender - capHeight/2 below the top. Cap-height (not x-height): UI
-  // labels are capital-led, so the eye centers on the caps — x-height sits a few px
-  // low. Falls back to ascender*0.65 if the 'H' glyph is missing. Scales with the
-  // font, so no per-size tweaking.
+  // Cap-height middle: baseline is at top + ascender, caps reach capHeight above it,
+  // so the optical center is ascender - capHeight/2 below the top. Cap (not x) height
+  // because UI labels are capital-led. Falls back to ascender*0.65 without an 'H'.
   const int ascender = getFontAscenderSize(fontId);
   const int capHeight = getFontCapHeight(fontId);
   if (capHeight <= 0) return (ascender * 65) / 100;

@@ -225,13 +225,11 @@ class GfxRenderer {
   int getTextAdvanceX(int fontId, const char* text, EpdFontFamily::Style style) const;
   int getFontAscenderSize(int fontId) const;
   int getLineHeight(int fontId) const;
-  // Real visible font metrics (from the 'H' / 'x' glyph geometry) for vertical
-  // alignment that follows the font, not a guessed ascender fraction.
+  // Cap height (from the 'H' glyph), the real visible font extent for vertical
+  // alignment that follows the font instead of a guessed ascender fraction.
   int getFontCapHeight(int fontId) const;
-  int getFontXHeight(int fontId) const;
-  // Offset from drawText's y (text top) to the text's optical vertical center.
-  // Center any element (icon, etc.) on a line of text via:
-  //   centerY = textTop + getTextVisualCenterOffset(fontId)
+  // Offset from text top (drawText's y) to the text's optical center; align an
+  // element to a line via centerY = textTop + getTextVisualCenterOffset(fontId).
   int getTextVisualCenterOffset(int fontId) const;
   std::string truncatedText(int fontId, const char* text, int maxWidth,
                             EpdFontFamily::Style style = EpdFontFamily::REGULAR) const;

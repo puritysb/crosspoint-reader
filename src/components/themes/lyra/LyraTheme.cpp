@@ -315,8 +315,15 @@ void LyraTheme::drawList(const GfxRenderer& renderer, Rect rect, int itemCount, 
     if (rowIcon != nullptr) {
       const freeink::Icon* ic = pickIcon(rowIcon(i), drawnIconPx);
       if (ic != nullptr) {
-        // Place the icon's baked-in optical center on the title's optical center.
-        const int textCenter = titleTop + renderer.getTextVisualCenterOffset(UI_10_FONT_ID);
+        // Place the icon's baked-in optical center on the row's text center. For rows
+        // with a subtitle, center across both lines (title near the top, subtitle at
+        // itemY + 30) so the icon sits in the middle of the stacked block rather than
+        // riding up with the title alone.
+        int textCenter = titleTop + renderer.getTextVisualCenterOffset(UI_10_FONT_ID);
+        if (rowSubtitle != nullptr) {
+          const int subtitleCenter = itemY + 30 + renderer.getTextVisualCenterOffset(SMALL_FONT_ID);
+          textCenter = (textCenter + subtitleCenter) / 2;
+        }
         renderer.drawIcon(*ic, rect.x + M().contentSidePadding + hPaddingInSelection,
                           textCenter - ic->opticalCenterY);
       }

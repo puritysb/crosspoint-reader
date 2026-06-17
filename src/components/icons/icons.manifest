@@ -4,12 +4,12 @@
 folder   = folder
 text     = file-text
 image    = image
-book     = book-open
+book     = book
 file     = file
-recent   = clock
 settings = settings
-transfer = arrow-down-up
+transfer = send-horizontal
 library  = library-big
 wifi     = wifi
 hotspot  = router
 bookmark = bookmark
+firmware = cpu

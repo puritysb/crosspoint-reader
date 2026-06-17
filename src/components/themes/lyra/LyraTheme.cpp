@@ -71,7 +71,6 @@ const freeink::Icon* pickIcon(UIIcon icon, int targetPx) {
     case UIIcon::Image: VARIANTS(image) break;
     case UIIcon::Book: VARIANTS(book) break;
     case UIIcon::File: VARIANTS(file) break;
-    case UIIcon::Recent: VARIANTS(recent) break;
     case UIIcon::Settings: VARIANTS(settings) break;
     case UIIcon::Transfer: VARIANTS(transfer) break;
     case UIIcon::Library: VARIANTS(library) break;

@@ -196,6 +196,9 @@ UIIcon UITheme::getFileIcon(const std::string& filename) {
   if (FsHelpers::hasBmpExtension(filename)) {
     return Image;
   }
+  if (FsHelpers::checkFileExtension(filename, ".bin")) {
+    return Firmware;
+  }
   return File;
 }
 

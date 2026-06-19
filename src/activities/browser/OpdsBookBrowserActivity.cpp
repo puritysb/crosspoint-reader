@@ -33,7 +33,6 @@ void OpdsBookBrowserActivity::onEnter() {
   currentPath = "";
   selectorIndex = 0;
   consumeConfirm = false;
-  consumeBack = false;
   errorMessage.clear();
   statusMessage = tr(STR_CHECKING_WIFI);
   requestUpdate();
@@ -60,10 +59,6 @@ void OpdsBookBrowserActivity::loop() {
 
   if (consumeConfirm && mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
     consumeConfirm = false;
-    return;
-  }
-  if (consumeBack && mappedInput.wasReleased(MappedInputManager::Button::Back)) {
-    consumeBack = false;
     return;
   }
 

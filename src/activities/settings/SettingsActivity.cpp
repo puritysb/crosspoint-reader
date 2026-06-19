@@ -189,7 +189,6 @@ void SettingsActivity::loop() {
     return;
   }
 
-  // Handle navigation
   buttonNavigator.onNextRelease([this] {
     selectedSettingIndex = ButtonNavigator::nextIndex(selectedSettingIndex, settingsCount + 1);
     requestUpdate();
@@ -429,7 +428,6 @@ void SettingsActivity::render(RenderLock&&) {
       },
       true);
 
-  // Draw help text
   const auto confirmLabel =
       (selectedSettingIndex == 0)
           ? I18N.get(categoryNames[(selectedCategoryIndex + 1) % categoryCount])

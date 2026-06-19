@@ -20,7 +20,11 @@ void EpubReaderFootnotesActivity::onEnter() {
 void EpubReaderFootnotesActivity::onExit() { Activity::onExit(); }
 
 void EpubReaderFootnotesActivity::loop() {
-  const int visibleCount = std::max(1, renderer.getScreenHeight() / 36);
+  constexpr int lineHeight = 36;
+  const auto orientation = renderer.getOrientation();
+  const bool isPortraitInverted = orientation == GfxRenderer::Orientation::PortraitInverted;
+  const int contentY = isPortraitInverted ? 50 : 0;
+  const int visibleCount = std::max(1, (renderer.getScreenHeight() - contentY) / lineHeight);
   if (mappedInput.wasListScroll(selectedIndex, static_cast<int>(footnotes.size()), visibleCount)) {
     requestUpdate();
     return;

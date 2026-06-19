@@ -33,7 +33,6 @@ class OpdsBookBrowserActivity final : public Activity {
   std::string currentPath;
   std::string searchTemplate;
   bool consumeConfirm = false;
-  bool consumeBack = false;  // Added missing member
   int selectorIndex = 0;
   std::string errorMessage;
   std::string statusMessage;

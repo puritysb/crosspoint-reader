@@ -3,7 +3,6 @@
 #include <FreeInkUI.h>
 #include <GfxRenderer.h>
 
-#include <algorithm>
 #include <cstdlib>
 
 #include "CrossPointSettings.h"

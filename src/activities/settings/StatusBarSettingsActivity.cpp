@@ -150,7 +150,6 @@ void StatusBarSettingsActivity::loop() {
     return;
   }
 
-  // Handle navigation
   buttonNavigator.onNextRelease([this] {
     selectedIndex = ButtonNavigator::nextIndex(selectedIndex, visibleItemCount);
     requestUpdate();

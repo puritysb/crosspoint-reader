@@ -463,7 +463,6 @@ void WifiSelectionActivity::loop() {
       }
     }
 
-    // Handle navigation
     buttonNavigator.onNext([this] {
       selectedNetworkIndex = ButtonNavigator::nextIndex(selectedNetworkIndex, networks.size());
       requestUpdate();

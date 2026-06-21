@@ -82,9 +82,7 @@ void RoundedRaffTheme::drawHeader(const GfxRenderer& renderer, Rect rect, const 
   const int maxTitleWidth = std::max(0, batteryGroupLeftX - 20 - titleX);
   auto headerTitle = renderer.truncatedText(kTitleFontId, title, maxTitleWidth, EpdFontFamily::BOLD);
   renderer.drawText(kTitleFontId, titleX, titleY, headerTitle.c_str(), true, EpdFontFamily::BOLD);
-  drawBatteryRight(renderer,
-                   Rect{batteryIconX, rect.y + 14, M().batteryWidth,
-                        M().batteryHeight},
+  drawBatteryRight(renderer, Rect{batteryIconX, rect.y + 14, M().batteryWidth, M().batteryHeight},
                    showBatteryPercentage);
 }
 
@@ -136,9 +134,8 @@ void RoundedRaffTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect, con
 
   // Tapping the continue-reading cover opens recentBooks[0] (home selector 0).
   if (hasContinueReading) {
-    TouchRegistry::getInstance().add(
-        Rect{tileX + (tileWidth - coverWidth) / 2, imgY, coverWidth, M().homeCoverHeight}, 0,
-        TouchRegistry::Cover);
+    TouchRegistry::getInstance().add(Rect{tileX + (tileWidth - coverWidth) / 2, imgY, coverWidth, M().homeCoverHeight},
+                                     0, TouchRegistry::Cover);
   }
 
   // Draw book card regardless, fill with message based on `hasContinueReading`
@@ -152,8 +149,7 @@ void RoundedRaffTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect, con
       if (coverPath.empty()) {
         hasCover = false;
       } else {
-        const std::string coverBmpPath =
-            UITheme::getCoverThumbPath(coverPath, M().homeCoverHeight);
+        const std::string coverBmpPath = UITheme::getCoverThumbPath(coverPath, M().homeCoverHeight);
 
         // First time: load cover from SD and render
         HalFile file;
@@ -161,11 +157,9 @@ void RoundedRaffTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect, con
           Bitmap bitmap(file);
           if (bitmap.parseHeaders() == BmpReaderError::Ok) {
             coverWidth = bitmap.getWidth();
-            renderer.drawBitmap(bitmap, tileX + (tileWidth - coverWidth) / 2, imgY, coverWidth,
-                                M().homeCoverHeight);
+            renderer.drawBitmap(bitmap, tileX + (tileWidth - coverWidth) / 2, imgY, coverWidth, M().homeCoverHeight);
             renderer.maskRoundedRectOutsideCorners(tileX + (tileWidth - coverWidth) / 2, imgY, coverWidth,
-                                                   M().homeCoverHeight, kCoverRadius,
-                                                   Color::LightGray);
+                                                   M().homeCoverHeight, kCoverRadius, Color::LightGray);
           } else {
             hasCover = false;
           }
@@ -174,17 +168,16 @@ void RoundedRaffTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect, con
       }
 
       // Draw either way
-      renderer.drawRoundedRect(tileX + (tileWidth - coverWidth) / 2, imgY, coverWidth,
-                               M().homeCoverHeight, 1, kCoverRadius, true);
+      renderer.drawRoundedRect(tileX + (tileWidth - coverWidth) / 2, imgY, coverWidth, M().homeCoverHeight, 1,
+                               kCoverRadius, true);
 
       if (!hasCover) {
         // Render empty cover
-        renderer.fillRect(tileX + (tileWidth - coverWidth) / 2, imgY + (M().homeCoverHeight / 3),
-                          coverWidth, 2 * M().homeCoverHeight / 3, true);
+        renderer.fillRect(tileX + (tileWidth - coverWidth) / 2, imgY + (M().homeCoverHeight / 3), coverWidth,
+                          2 * M().homeCoverHeight / 3, true);
         renderer.drawIcon(CoverIcon, tileX + (tileWidth - coverWidth) / 2 + 24, imgY + 24, 32, 32);
         renderer.maskRoundedRectOutsideCorners(tileX + (tileWidth - coverWidth) / 2, imgY, coverWidth,
-                                               M().homeCoverHeight, kCoverRadius,
-                                               Color::LightGray);
+                                               M().homeCoverHeight, kCoverRadius, Color::LightGray);
       }
 
       coverBufferStored = storeCoverBuffer();
@@ -193,13 +186,12 @@ void RoundedRaffTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect, con
 
     renderer.fillRoundedRect(tileX, tileY, tileWidth, imgY - tileY, kRowRadius, true, true, false, false,
                              Color::LightGray);
-    renderer.fillRectDither(tileX, imgY, (tileWidth - coverWidth) / 2, M().homeCoverHeight,
-                            Color::LightGray);
+    renderer.fillRectDither(tileX, imgY, (tileWidth - coverWidth) / 2, M().homeCoverHeight, Color::LightGray);
     renderer.fillRectDither(tileX + (tileWidth + coverWidth) / 2, imgY, (tileWidth - coverWidth) / 2,
                             M().homeCoverHeight, Color::LightGray);
     renderer.fillRoundedRect(tileX, imgY + M().homeCoverHeight, tileWidth,
-                             tileHeight - (imgY - tileY + M().homeCoverHeight), kRowRadius,
-                             false, false, true, true, Color::LightGray);
+                             tileHeight - (imgY - tileY + M().homeCoverHeight), kRowRadius, false, false, true, true,
+                             Color::LightGray);
   } else {
     renderer.fillRoundedRect(tileX, tileY, tileWidth, tileHeight, kRowRadius, Color::LightGray);
     renderer.drawCenteredText(kTitleFontId, rect.y + rect.height / 2 - renderer.getLineHeight(kTitleFontId) / 2,

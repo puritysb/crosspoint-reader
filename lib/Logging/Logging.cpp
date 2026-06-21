@@ -1,9 +1,9 @@
+#include "Logging.h"
+
 #include <BoardConfig.h>
 #include <esp_rom_sys.h>
 
 #include <string>
-
-#include "Logging.h"
 
 #define MAX_ENTRY_LEN 256
 #define MAX_LOG_LINES 16

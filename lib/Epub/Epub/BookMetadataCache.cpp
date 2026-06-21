@@ -496,7 +496,8 @@ BookMetadataCache::TocEntry BookMetadataCache::getTocEntry(const int index) {
 BookMetadataCache::SpineEntry BookMetadataCache::readSpineEntry(HalFile& file) const {
   SpineEntry entry;
   if (!readStringBounded(file, entry.href) ||
-      file.read(&entry.cumulativeSize, sizeof(entry.cumulativeSize)) != static_cast<int>(sizeof(entry.cumulativeSize)) ||
+      file.read(&entry.cumulativeSize, sizeof(entry.cumulativeSize)) !=
+          static_cast<int>(sizeof(entry.cumulativeSize)) ||
       file.read(&entry.tocIndex, sizeof(entry.tocIndex)) != static_cast<int>(sizeof(entry.tocIndex))) {
     LOG_ERR("BMC", "Invalid spine cache entry");
     return {};

@@ -112,7 +112,21 @@ struct ThemeMetrics {
 // update it after adding a field (and decide there whether the field scales).
 inline constexpr unsigned THEME_METRICS_SIZEOF = 224;
 
-enum UIIcon { None = 0, Folder, Text, Image, Book, File, Settings, Transfer, Library, Wifi, Hotspot, Bookmark, Firmware };
+enum UIIcon {
+  None = 0,
+  Folder,
+  Text,
+  Image,
+  Book,
+  File,
+  Settings,
+  Transfer,
+  Library,
+  Wifi,
+  Hotspot,
+  Bookmark,
+  Firmware
+};
 
 enum class KeyboardKeyType { Normal, Shift, Mode, Space, Del, Ok, Disabled };
 

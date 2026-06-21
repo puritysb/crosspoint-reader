@@ -266,18 +266,15 @@ inline std::vector<SettingInfo> getSettingsList(const SdCardFontRegistry* regist
               v.end());
       for (auto it = v.begin(); it != v.end(); ++it) {
         if (it->nameId == StrId::STR_SIDE_BTN_LAYOUT) {
-          v.insert(it, SettingInfo::Toggle(StrId::STR_TOUCH_READER_CONTROLS,
-                                           &CrossPointSettings::touchReaderControls, "touchReaderControls",
-                                           StrId::STR_CAT_CONTROLS));
+          v.insert(it, SettingInfo::Toggle(StrId::STR_TOUCH_READER_CONTROLS, &CrossPointSettings::touchReaderControls,
+                                           "touchReaderControls", StrId::STR_CAT_CONTROLS));
           break;
         }
       }
     }
     if (BoardConfig::hasTouch()) {
       v.erase(std::remove_if(v.begin(), v.end(),
-                             [](const SettingInfo& s) {
-                               return s.nameId == StrId::STR_FRONT_BTN_FOLLOW_ORIENTATION;
-                             }),
+                             [](const SettingInfo& s) { return s.nameId == StrId::STR_FRONT_BTN_FOLLOW_ORIENTATION; }),
               v.end());
     }
 

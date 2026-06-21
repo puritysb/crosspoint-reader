@@ -1,5 +1,6 @@
 #include "OpdsSettingsActivity.h"
 
+#include <FreeInkUI.h>
 #include <GfxRenderer.h>
 #include <I18n.h>
 #include <Logging.h>
@@ -11,7 +12,6 @@
 #include "activities/util/KeyboardEntryActivity.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
-#include <FreeInkUI.h>
 
 namespace {
 // Editable fields: Name, URL, Username, Password.

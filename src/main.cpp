@@ -1,7 +1,5 @@
 #include <Arduino.h>
 #include <Epub.h>
-
-#include <cmath>
 #include <FontCacheManager.h>
 #include <FontDecompressor.h>
 #include <GfxRenderer.h>
@@ -12,6 +10,8 @@
 #include <HalStorage.h>
 #include <HalSystem.h>
 #include <HalTiltSensor.h>
+
+#include <cmath>
 
 #if defined(FREEINK_DEVICE_LILYGO) && FREEINK_DEVICE_LILYGO
 #include <BoardT5S3.h>

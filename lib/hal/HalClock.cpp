@@ -222,8 +222,8 @@ bool HalClock::syncFromNTP() {
           _cachedHour = dt.hour;
           _cachedMinute = dt.minute;
           _hasCachedTime = true;
-          LOG_INF("CLK", "RTC set to %04u-%02u-%02u %02u:%02u:%02u UTC", dt.year, dt.month, dt.day, dt.hour,
-                  dt.minute, dt.second);
+          LOG_INF("CLK", "RTC set to %04u-%02u-%02u %02u:%02u:%02u UTC", dt.year, dt.month, dt.day, dt.hour, dt.minute,
+                  dt.second);
           return true;
         }
         return false;

@@ -274,8 +274,7 @@ void BaseTheme::drawList(const GfxRenderer& renderer, Rect rect, int itemCount, 
                          const std::function<UIIcon(int index)>& rowIcon,
                          const std::function<std::string(int index)>& rowValue, bool highlightValue,
                          const std::function<bool(int index)>& rowDimmed) const {
-  int rowHeight =
-      (rowSubtitle != nullptr) ? M().listWithSubtitleRowHeight : M().listRowHeight;
+  int rowHeight = (rowSubtitle != nullptr) ? M().listWithSubtitleRowHeight : M().listRowHeight;
   int pageItems = rect.height / rowHeight;
 
   const int totalPages = (itemCount + pageItems - 1) / pageItems;
@@ -359,8 +358,8 @@ void BaseTheme::drawList(const GfxRenderer& renderer, Rect rect, int itemCount, 
       if (rowSubtitle != nullptr) {
         valueY = itemY + 10;
       }
-      renderer.drawText(UI_10_FONT_ID, rect.x + contentWidth - M().contentSidePadding - valueTextWidth,
-                        valueY, valueText.c_str(), i != selectedIndex);
+      renderer.drawText(UI_10_FONT_ID, rect.x + contentWidth - M().contentSidePadding - valueTextWidth, valueY,
+                        valueText.c_str(), i != selectedIndex);
     }
   }
 }
@@ -371,31 +370,26 @@ void BaseTheme::drawHeader(const GfxRenderer& renderer, Rect rect, const char* t
 
   // Hide last battery draw
   constexpr int maxBatteryWidth = 80;
-  renderer.fillRect(rect.x + rect.width - maxBatteryWidth, rect.y + 5, maxBatteryWidth,
-                    M().batteryHeight + 10, false);
+  renderer.fillRect(rect.x + rect.width - maxBatteryWidth, rect.y + 5, maxBatteryWidth, M().batteryHeight + 10, false);
 
   const bool showBatteryPercentage =
       SETTINGS.hideBatteryPercentage != CrossPointSettings::HIDE_BATTERY_PERCENTAGE::HIDE_ALWAYS;
   // Position icon at right edge, drawBatteryRight will place text to the left
   const int batteryX = rect.x + rect.width - 12 - M().batteryWidth;
-  drawBatteryRight(renderer,
-                   Rect{batteryX, rect.y + 5, M().batteryWidth, M().batteryHeight},
-                   showBatteryPercentage);
+  drawBatteryRight(renderer, Rect{batteryX, rect.y + 5, M().batteryWidth, M().batteryHeight}, showBatteryPercentage);
 
   if (title) {
     int padding = rect.width - batteryX + M().batteryWidth;
-    auto truncatedTitle = renderer.truncatedText(UI_12_FONT_ID, title,
-                                                 rect.width - padding * 2 - M().contentSidePadding * 2,
-                                                 EpdFontFamily::BOLD);
+    auto truncatedTitle = renderer.truncatedText(
+        UI_12_FONT_ID, title, rect.width - padding * 2 - M().contentSidePadding * 2, EpdFontFamily::BOLD);
     renderer.drawCenteredText(UI_12_FONT_ID, rect.y + 5, truncatedTitle.c_str(), true, EpdFontFamily::BOLD);
   }
 
   if (subtitle) {
-    auto truncatedSubtitle = renderer.truncatedText(
-        SMALL_FONT_ID, subtitle, rect.width - M().contentSidePadding * 2, EpdFontFamily::REGULAR);
+    auto truncatedSubtitle = renderer.truncatedText(SMALL_FONT_ID, subtitle, rect.width - M().contentSidePadding * 2,
+                                                    EpdFontFamily::REGULAR);
     int truncatedSubtitleWidth = renderer.getTextWidth(SMALL_FONT_ID, truncatedSubtitle.c_str());
-    renderer.drawText(SMALL_FONT_ID,
-                      rect.x + rect.width - M().contentSidePadding - truncatedSubtitleWidth, subtitleY,
+    renderer.drawText(SMALL_FONT_ID, rect.x + rect.width - M().contentSidePadding - truncatedSubtitleWidth, subtitleY,
                       truncatedSubtitle.c_str(), true);
   }
 }
@@ -409,18 +403,18 @@ void BaseTheme::drawSubHeader(const GfxRenderer& renderer, Rect rect, const char
     auto truncatedRightLabel =
         renderer.truncatedText(SMALL_FONT_ID, rightLabel, maxListValueWidth, EpdFontFamily::REGULAR);
     int rightLabelWidth = renderer.getTextWidth(SMALL_FONT_ID, truncatedRightLabel.c_str());
-    renderer.drawText(SMALL_FONT_ID, rect.x + rect.width - M().contentSidePadding - rightLabelWidth,
-                      rect.y + 7, truncatedRightLabel.c_str());
+    renderer.drawText(SMALL_FONT_ID, rect.x + rect.width - M().contentSidePadding - rightLabelWidth, rect.y + 7,
+                      truncatedRightLabel.c_str());
     rightSpace += rightLabelWidth + 10;
   }
 
-  auto truncatedLabel = renderer.truncatedText(
-      UI_12_FONT_ID, label, rect.width - M().contentSidePadding - rightSpace, EpdFontFamily::REGULAR);
+  auto truncatedLabel = renderer.truncatedText(UI_12_FONT_ID, label, rect.width - M().contentSidePadding - rightSpace,
+                                               EpdFontFamily::REGULAR);
   renderer.drawText(UI_12_FONT_ID, currentX, rect.y, truncatedLabel.c_str(), true, EpdFontFamily::REGULAR);
 }
 
 int BaseTheme::tabBarScrollOffset(int contentWidth, int selStart, int selWidth, int availWidth) {
-  if (contentWidth <= availWidth) return 0;  // fits, no scroll
+  if (contentWidth <= availWidth) return 0;             // fits, no scroll
   int offset = selStart - (availWidth - selWidth) / 2;  // center the selected tab
   const int maxOffset = contentWidth - availWidth;
   if (offset < 0) offset = 0;
@@ -498,8 +492,7 @@ void BaseTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect, const std:
 
   if (hasContinueReading && !recentBooks[0].coverBmpPath.empty()) {
     // Try to get actual image dimensions from BMP header
-    const std::string coverBmpPath =
-        UITheme::getCoverThumbPath(recentBooks[0].coverBmpPath, M().homeCoverHeight);
+    const std::string coverBmpPath = UITheme::getCoverThumbPath(recentBooks[0].coverBmpPath, M().homeCoverHeight);
 
     HalFile file;
     if (Storage.openFileForRead("HOME", coverBmpPath, file)) {
@@ -552,8 +545,7 @@ void BaseTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect, const std:
     // Only load from SD on first render, then use stored buffer
 
     if (hasContinueReading && !recentBooks[0].coverBmpPath.empty() && !coverRendered) {
-      const std::string coverBmpPath =
-          UITheme::getCoverThumbPath(recentBooks[0].coverBmpPath, M().homeCoverHeight);
+      const std::string coverBmpPath = UITheme::getCoverThumbPath(recentBooks[0].coverBmpPath, M().homeCoverHeight);
 
       // First time: load cover from SD and render
       HalFile file;

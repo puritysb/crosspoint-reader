@@ -670,8 +670,7 @@ void KeyboardEntryActivity::render(RenderLock&&) {
         if (snippetIdx < URL_SNIPPET_COUNT) {
           GUI.drawKeyboardKey(renderer, Rect{keyX, rowY, keyWidth, keyHeight}, urlSnippets[snippetIdx],
                               activeKeySelected, nullptr);
-          TouchRegistry::getInstance().add(Rect{keyX, rowY, keyWidth, keyHeight}, row * 100 + col,
-                                           TouchRegistry::Item);
+          TouchRegistry::getInstance().add(Rect{keyX, rowY, keyWidth, keyHeight}, row * 100 + col, TouchRegistry::Item);
         }
       } else {
         const KeyDef& key = layout[row][col];

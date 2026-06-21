@@ -1,7 +1,7 @@
 #include "OpdsBookBrowserActivity.h"
 
-#include <GfxRenderer.h>
 #include <FreeInkUI.h>
+#include <GfxRenderer.h>
 #include <I18n.h>
 #include <Logging.h>
 #include <OpdsStream.h>

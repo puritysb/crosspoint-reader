@@ -120,8 +120,8 @@ bool MappedInputManager::wasBackGesture() const {
     return true;
   }
   // Else the top-left corner, for screens with no Back target (e.g. the reader).
-  const bool isTopLeftBack = lx <= renderer.getScreenWidth() * BACK_GESTURE_FRAC_X &&
-                             ly <= renderer.getScreenHeight() * BACK_GESTURE_FRAC_Y;
+  const bool isTopLeftBack =
+      lx <= renderer.getScreenWidth() * BACK_GESTURE_FRAC_X && ly <= renderer.getScreenHeight() * BACK_GESTURE_FRAC_Y;
   if (isTopLeftBack) rememberTouchHeldTime();
   return isTopLeftBack;
 }

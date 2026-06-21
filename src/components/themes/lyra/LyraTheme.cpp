@@ -59,25 +59,36 @@ int nearestIconSize(int targetPx) { return kIconSizes[iconVariantIndex(targetPx)
 // asset (not an upscale) with exact alignment.
 const freeink::Icon* pickIcon(UIIcon icon, int targetPx) {
   const freeink::Icon* const* v = nullptr;
-#define VARIANTS(n)                                                                      \
-  {                                                                                      \
-    static const freeink::Icon* a[] = {&icon_##n##_24, &icon_##n##_32, &icon_##n##_40,   \
-                                       &icon_##n##_48};                                  \
-    v = a;                                                                               \
+#define VARIANTS(n)                                                                                     \
+  {                                                                                                     \
+    static const freeink::Icon* a[] = {&icon_##n##_24, &icon_##n##_32, &icon_##n##_40, &icon_##n##_48}; \
+    v = a;                                                                                              \
   }
   switch (icon) {
-    case UIIcon::Folder: VARIANTS(folder) break;
-    case UIIcon::Text: VARIANTS(text) break;
-    case UIIcon::Image: VARIANTS(image) break;
-    case UIIcon::Book: VARIANTS(book) break;
-    case UIIcon::File: VARIANTS(file) break;
-    case UIIcon::Settings: VARIANTS(settings) break;
-    case UIIcon::Transfer: VARIANTS(transfer) break;
-    case UIIcon::Library: VARIANTS(library) break;
-    case UIIcon::Wifi: VARIANTS(wifi) break;
-    case UIIcon::Hotspot: VARIANTS(hotspot) break;
-    case UIIcon::Bookmark: VARIANTS(bookmark) break;
-    default: return nullptr;
+    case UIIcon::Folder:
+      VARIANTS(folder) break;
+    case UIIcon::Text:
+      VARIANTS(text) break;
+    case UIIcon::Image:
+      VARIANTS(image) break;
+    case UIIcon::Book:
+      VARIANTS(book) break;
+    case UIIcon::File:
+      VARIANTS(file) break;
+    case UIIcon::Settings:
+      VARIANTS(settings) break;
+    case UIIcon::Transfer:
+      VARIANTS(transfer) break;
+    case UIIcon::Library:
+      VARIANTS(library) break;
+    case UIIcon::Wifi:
+      VARIANTS(wifi) break;
+    case UIIcon::Hotspot:
+      VARIANTS(hotspot) break;
+    case UIIcon::Bookmark:
+      VARIANTS(bookmark) break;
+    default:
+      return nullptr;
   }
 #undef VARIANTS
   return v[iconVariantIndex(targetPx)];
@@ -117,9 +128,7 @@ void LyraTheme::drawHeader(const GfxRenderer& renderer, Rect rect, const char* t
       SETTINGS.hideBatteryPercentage != CrossPointSettings::HIDE_BATTERY_PERCENTAGE::HIDE_ALWAYS;
   // Position icon at right edge, drawBatteryRight will place text to the left
   const int batteryX = rect.x + rect.width - 12 - M().batteryWidth;
-  drawBatteryRight(renderer,
-                   Rect{batteryX, rect.y + 5, M().batteryWidth, M().batteryHeight},
-                   showBatteryPercentage);
+  drawBatteryRight(renderer, Rect{batteryX, rect.y + 5, M().batteryWidth, M().batteryHeight}, showBatteryPercentage);
 
   int maxTitleWidth = title != nullptr ? renderer.getTextWidth(UI_12_FONT_ID, title, EpdFontFamily::BOLD) : 0;
   int maxSubtitleWidth =
@@ -145,18 +154,16 @@ void LyraTheme::drawHeader(const GfxRenderer& renderer, Rect rect, const char* t
 
   if (title) {
     auto truncatedTitle = renderer.truncatedText(UI_12_FONT_ID, title, maxTitleWidth, EpdFontFamily::BOLD);
-    renderer.drawText(UI_12_FONT_ID, rect.x + M().contentSidePadding,
-                      rect.y + M().batteryBarHeight + 3, truncatedTitle.c_str(), true,
-                      EpdFontFamily::BOLD);
+    renderer.drawText(UI_12_FONT_ID, rect.x + M().contentSidePadding, rect.y + M().batteryBarHeight + 3,
+                      truncatedTitle.c_str(), true, EpdFontFamily::BOLD);
     renderer.drawLine(rect.x, rect.y + rect.height - 3, rect.x + rect.width - 1, rect.y + rect.height - 3, 3, true);
   }
 
   if (subtitle) {
     auto truncatedSubtitle = renderer.truncatedText(SMALL_FONT_ID, subtitle, maxSubtitleWidth, EpdFontFamily::REGULAR);
     int truncatedSubtitleWidth = renderer.getTextWidth(SMALL_FONT_ID, truncatedSubtitle.c_str());
-    renderer.drawText(SMALL_FONT_ID,
-                      rect.x + rect.width - M().contentSidePadding - truncatedSubtitleWidth,
-                      rect.y + 50, truncatedSubtitle.c_str(), true);
+    renderer.drawText(SMALL_FONT_ID, rect.x + rect.width - M().contentSidePadding - truncatedSubtitleWidth, rect.y + 50,
+                      truncatedSubtitle.c_str(), true);
   }
 }
 
@@ -167,13 +174,13 @@ void LyraTheme::drawSubHeader(const GfxRenderer& renderer, Rect rect, const char
     auto truncatedRightLabel =
         renderer.truncatedText(SMALL_FONT_ID, rightLabel, maxListValueWidth, EpdFontFamily::REGULAR);
     int rightLabelWidth = renderer.getTextWidth(SMALL_FONT_ID, truncatedRightLabel.c_str());
-    renderer.drawText(SMALL_FONT_ID, rect.x + rect.width - M().contentSidePadding - rightLabelWidth,
-                      rect.y + 7, truncatedRightLabel.c_str());
+    renderer.drawText(SMALL_FONT_ID, rect.x + rect.width - M().contentSidePadding - rightLabelWidth, rect.y + 7,
+                      truncatedRightLabel.c_str());
     rightSpace += rightLabelWidth + hPaddingInSelection;
   }
 
-  auto truncatedLabel = renderer.truncatedText(
-      UI_10_FONT_ID, label, rect.width - M().contentSidePadding - rightSpace, EpdFontFamily::REGULAR);
+  auto truncatedLabel = renderer.truncatedText(UI_10_FONT_ID, label, rect.width - M().contentSidePadding - rightSpace,
+                                               EpdFontFamily::REGULAR);
   renderer.drawText(UI_10_FONT_ID, currentX, rect.y + 6, truncatedLabel.c_str(), true, EpdFontFamily::REGULAR);
 
   renderer.drawLine(rect.x, rect.y + rect.height - 1, rect.x + rect.width - 1, rect.y + rect.height - 1, true);
@@ -241,8 +248,7 @@ void LyraTheme::drawList(const GfxRenderer& renderer, Rect rect, int itemCount, 
                          const std::function<UIIcon(int index)>& rowIcon,
                          const std::function<std::string(int index)>& rowValue, bool highlightValue,
                          const std::function<bool(int index)>& rowDimmed) const {
-  int rowHeight =
-      (rowSubtitle != nullptr) ? M().listWithSubtitleRowHeight : M().listRowHeight;
+  int rowHeight = (rowSubtitle != nullptr) ? M().listWithSubtitleRowHeight : M().listRowHeight;
   int pageItems = rect.height / rowHeight;
 
   const int totalPages = (itemCount + pageItems - 1) / pageItems;
@@ -255,18 +261,14 @@ void LyraTheme::drawList(const GfxRenderer& renderer, Rect rect, int itemCount, 
     const int scrollBarY = rect.y + ((scrollAreaHeight - scrollBarHeight) * currentPage) / (totalPages - 1);
     const int scrollBarX = rect.x + rect.width - M().scrollBarRightOffset;
     renderer.drawLine(scrollBarX, rect.y, scrollBarX, rect.y + scrollAreaHeight, true);
-    renderer.fillRect(scrollBarX - M().scrollBarWidth, scrollBarY, M().scrollBarWidth,
-                      scrollBarHeight, true);
+    renderer.fillRect(scrollBarX - M().scrollBarWidth, scrollBarY, M().scrollBarWidth, scrollBarHeight, true);
   }
 
   // Draw selection
-  int contentWidth =
-      rect.width -
-      (totalPages > 1 ? (M().scrollBarWidth + M().scrollBarRightOffset) : 1);
+  int contentWidth = rect.width - (totalPages > 1 ? (M().scrollBarWidth + M().scrollBarRightOffset) : 1);
   if (selectedIndex >= 0) {
-    renderer.fillRoundedRect(
-        rect.x + M().contentSidePadding, rect.y + selectedIndex % pageItems * rowHeight,
-        contentWidth - M().contentSidePadding * 2, rowHeight, cornerRadius, Color::LightGray);
+    renderer.fillRoundedRect(rect.x + M().contentSidePadding, rect.y + selectedIndex % pageItems * rowHeight,
+                             contentWidth - M().contentSidePadding * 2, rowHeight, cornerRadius, Color::LightGray);
   }
 
   int textX = rect.x + M().contentSidePadding + hPaddingInSelection;
@@ -329,8 +331,7 @@ void LyraTheme::drawList(const GfxRenderer& renderer, Rect rect, int itemCount, 
           const int subtitleCenter = itemY + 30 + renderer.getTextVisualCenterOffset(SMALL_FONT_ID);
           textCenter = (textCenter + subtitleCenter) / 2;
         }
-        renderer.drawIcon(*ic, rect.x + M().contentSidePadding + hPaddingInSelection,
-                          textCenter - ic->opticalCenterY);
+        renderer.drawIcon(*ic, rect.x + M().contentSidePadding + hPaddingInSelection, textCenter - ic->opticalCenterY);
       }
     }
 
@@ -344,17 +345,16 @@ void LyraTheme::drawList(const GfxRenderer& renderer, Rect rect, int itemCount, 
     // Draw value
     if (!valueText.empty()) {
       if (i == selectedIndex && highlightValue) {
-        renderer.fillRoundedRect(
-            rect.x + contentWidth - M().contentSidePadding - hPaddingInSelection - valueWidth, itemY,
-            valueWidth + hPaddingInSelection, rowHeight, cornerRadius, Color::Black);
+        renderer.fillRoundedRect(rect.x + contentWidth - M().contentSidePadding - hPaddingInSelection - valueWidth,
+                                 itemY, valueWidth + hPaddingInSelection, rowHeight, cornerRadius, Color::Black);
       }
 
       int valueY = itemY + 6;
       if (rowSubtitle != nullptr) {
         valueY = itemY + 16;
       }
-      renderer.drawText(UI_10_FONT_ID, rect.x + contentWidth - M().contentSidePadding - valueWidth,
-                        valueY, valueText.c_str(), !(i == selectedIndex && highlightValue));
+      renderer.drawText(UI_10_FONT_ID, rect.x + contentWidth - M().contentSidePadding - valueWidth, valueY,
+                        valueText.c_str(), !(i == selectedIndex && highlightValue));
     }
   }
 }
@@ -462,9 +462,8 @@ void LyraTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect, const std:
   // recentBooks[0] (home selector 0) — full card width, not just the cover photo.
   if (hasContinueReading) {
     TouchRegistry::getInstance().add(
-        Rect{M().contentSidePadding, tileY, tileWidth,
-             M().homeCoverHeight + 2 * hPaddingInSelection},
-        0, TouchRegistry::Cover);
+        Rect{M().contentSidePadding, tileY, tileWidth, M().homeCoverHeight + 2 * hPaddingInSelection}, 0,
+        TouchRegistry::Cover);
   }
 
   // Draw book card regardless, fill with message based on `hasContinueReading`
@@ -497,14 +496,13 @@ void LyraTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect, const std:
       }
 
       // Draw either way
-      renderer.drawRect(tileX + hPaddingInSelection, tileY + hPaddingInSelection, coverWidth,
-                        M().homeCoverHeight, true);
+      renderer.drawRect(tileX + hPaddingInSelection, tileY + hPaddingInSelection, coverWidth, M().homeCoverHeight,
+                        true);
 
       if (!hasCover) {
         // Render empty cover
-        renderer.fillRect(tileX + hPaddingInSelection,
-                          tileY + hPaddingInSelection + (M().homeCoverHeight / 3), coverWidth,
-                          2 * M().homeCoverHeight / 3, true);
+        renderer.fillRect(tileX + hPaddingInSelection, tileY + hPaddingInSelection + (M().homeCoverHeight / 3),
+                          coverWidth, 2 * M().homeCoverHeight / 3, true);
         renderer.drawIcon(CoverIcon, tileX + hPaddingInSelection + 24, tileY + hPaddingInSelection + 24, 32, 32);
       }
 
@@ -521,13 +519,12 @@ void LyraTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect, const std:
       // Draw selection box
       renderer.fillRoundedRect(tileX, tileY, tileWidth, hPaddingInSelection, cornerRadius, true, true, false, false,
                                Color::LightGray);
-      renderer.fillRectDither(tileX, tileY + hPaddingInSelection, hPaddingInSelection,
-                              M().homeCoverHeight, Color::LightGray);
-      renderer.fillRectDither(tileX + hPaddingInSelection + coverWidth, tileY + hPaddingInSelection,
-                              tileWidth - hPaddingInSelection - coverWidth, M().homeCoverHeight,
+      renderer.fillRectDither(tileX, tileY + hPaddingInSelection, hPaddingInSelection, M().homeCoverHeight,
                               Color::LightGray);
-      renderer.fillRoundedRect(tileX, tileY + M().homeCoverHeight + hPaddingInSelection, tileWidth,
-                               hPaddingInSelection, cornerRadius, false, false, true, true, Color::LightGray);
+      renderer.fillRectDither(tileX + hPaddingInSelection + coverWidth, tileY + hPaddingInSelection,
+                              tileWidth - hPaddingInSelection - coverWidth, M().homeCoverHeight, Color::LightGray);
+      renderer.fillRoundedRect(tileX, tileY + M().homeCoverHeight + hPaddingInSelection, tileWidth, hPaddingInSelection,
+                               cornerRadius, false, false, true, true, Color::LightGray);
     }
 
     auto titleLines = renderer.wrappedText(UI_12_FONT_ID, book.title.c_str(), textWidth, 3, EpdFontFamily::BOLD);

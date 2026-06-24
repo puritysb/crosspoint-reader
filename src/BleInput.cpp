@@ -1,9 +1,14 @@
 #include "BleInput.h"
 
+#include <GfxRenderer.h>
 #include <HalPowerManager.h>
+#include <I18n.h>
 
 #include <cstdio>
 #include <cstring>
+
+#include "MappedInputManager.h"
+#include "components/UITheme.h"
 
 namespace bleinput {
 
@@ -71,6 +76,24 @@ const char* specialName(uint8_t value) {
   }
 }
 }  // namespace
+
+void showConnectingUntilLinked(GfxRenderer& renderer, MappedInputManager& input) {
+  if (!BleHid.isRunning() || BleHid.isConnected()) return;
+  // drawPopup refreshes the panel itself, so draw once and let e-ink hold it while we
+  // pump the host. Holds until the remote links, the user presses a button to bail, or
+  // a generous timeout (a remote that slept after a disconnect needs a button to wake).
+  GUI.drawPopup(renderer, tr(STR_BT_CONNECTING_POPUP));
+  const unsigned long deadline = millis() + 10000;
+  while (!BleHid.isConnected() && millis() < deadline) {
+    BleHid.poll();
+    input.update();
+    if (input.wasAnyPressed()) break;
+    delay(50);
+  }
+  // Note: the caller must redraw to clear the popup. For grayscale reader pages the
+  // caller should also request a ghost-cleanup (HALF) refresh first — a plain fast/
+  // partial refresh ghosts badly over the BW popup (see Activity::requestGhostCleanup).
+}
 
 void describeKey(uint8_t kind, uint8_t value, char* out, size_t outLen) {
   if (!out || outLen == 0) return;

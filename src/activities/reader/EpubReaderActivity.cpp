@@ -875,19 +875,11 @@ void EpubReaderActivity::render(RenderLock&& lock) {
         built = buildSection();
         const bool bleOk = bleinput::ensureStarted();
         LOG_INF("ERS", "BLE restart after build: begin=%d", bleOk);
-        if (bleOk) {
-          // Show a connecting popup and give the bonded remote a moment to re-link so the
-          // user isn't left with an unresponsive remote and a silent pause. Bounded: a
-          // remote that needs a button press to re-advertise won't stall reading — it
-          // reconnects in the background after we return. The popup is drawn once (e-ink
-          // holds it) and the page render overwrites it when we resume.
-          GUI.drawPopup(renderer, tr(STR_BT_CONNECTING_POPUP));
-          const unsigned long deadline = millis() + 4000;
-          while (!BleHid.isConnected() && millis() < deadline) {
-            BleHid.poll();
-            delay(50);
-          }
-        }
+        // Hold the "BT Connecting..." popup until the remote re-links, then force the
+        // page render below onto the ghost-cleanup (HALF) path so the popup clears
+        // without ghosting the grayscale page.
+        bleinput::showConnectingUntilLinked(renderer, mappedInput);
+        requestGhostCleanup();
       }
       if (!built) {
         LOG_ERR("ERS", "Failed to persist page data to SD");

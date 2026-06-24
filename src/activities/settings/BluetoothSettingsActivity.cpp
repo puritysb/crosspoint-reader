@@ -6,7 +6,6 @@
 #include <cstdio>
 
 #include "BleButtonMapActivity.h"
-#include "BleInput.h"
 #include "CrossPointSettings.h"
 #include "MappedInputManager.h"
 #include "components/UITheme.h"
@@ -62,12 +61,9 @@ void BluetoothSettingsActivity::handleMenuConfirm() {
   const Action action = menuRows[menuIndex].action;
   switch (action) {
     case Action::ToggleBt:
+      // Flip the preference only; the main-loop lifecycle check starts/stops the BLE
+      // stack to match (and shows the "BT Connecting..." popup). Single owner.
       SETTINGS.bluetoothEnabled = SETTINGS.bluetoothEnabled ? 0 : 1;
-      if (SETTINGS.bluetoothEnabled) {
-        bleinput::ensureStarted();
-      } else {
-        bleinput::stop();
-      }
       SETTINGS.saveToFile();
       rebuildMenuRows();
       requestUpdate();
@@ -238,14 +234,18 @@ void BluetoothSettingsActivity::render(RenderLock&&) {
         },
         true);
   } else if (view == View::Scan) {
+    // Free2/3 remotes only advertise in the right slider mode — tell the user how.
+    GUI.drawHelpText(renderer, Rect{0, topOffset, pageWidth, 16}, tr(STR_BT_FREE_HINT1));
+    GUI.drawHelpText(renderer, Rect{0, topOffset + 16, pageWidth, 16}, tr(STR_BT_FREE_HINT2));
+    const int scanTop = topOffset + 38;
     const int count = BleHid.deviceCount();
     if (count == 0) {
-      GUI.drawHelpText(renderer, Rect{0, topOffset + metrics.verticalSpacing, pageWidth, 24},
+      GUI.drawHelpText(renderer, Rect{0, scanTop, pageWidth, 24},
                        BleHid.isScanning() ? tr(STR_SCANNING) : tr(STR_BT_NO_DEVICES));
     } else {
       GUI.drawList(
-          renderer, listRect, count, scanIndex, [this](int i) { return deviceLabel(i); }, nullptr, nullptr, nullptr,
-          false);
+          renderer, Rect{0, scanTop, pageWidth, contentHeight - 38}, count, scanIndex,
+          [this](int i) { return deviceLabel(i); }, nullptr, nullptr, nullptr, false);
     }
   } else {  // Paired
     const int count = BleHid.pairedCount();

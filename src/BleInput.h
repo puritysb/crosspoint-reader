@@ -17,6 +17,9 @@
 
 #include <cstdint>
 
+class GfxRenderer;
+class MappedInputManager;
+
 namespace bleinput {
 
 // Advertised central name shown to peripherals during pairing.
@@ -37,5 +40,10 @@ bool encodeKey(const freeink::KeyEvent& ev, uint8_t& kind, uint8_t& value);
 // Human-readable name for a stored (kind, value) identity, for the mapping UI.
 // Writes a null-terminated string into out (e.g. "Page Down", "Key 0x4B").
 void describeKey(uint8_t kind, uint8_t value, char* out, size_t outLen);
+
+// Draw a "BT Connecting..." popup and pump the BLE host until the bonded remote
+// links, the user presses a button to dismiss, or a timeout. No-op if BLE isn't
+// running or is already connected. The caller must redraw afterward to clear it.
+void showConnectingUntilLinked(GfxRenderer& renderer, MappedInputManager& input);
 
 }  // namespace bleinput

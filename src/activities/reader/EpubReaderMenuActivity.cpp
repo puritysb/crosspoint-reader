@@ -3,7 +3,6 @@
 #include <GfxRenderer.h>
 #include <I18n.h>
 
-#include "BleInput.h"
 #include "CrossPointSettings.h"
 #include "MappedInputManager.h"
 #include "components/UITheme.h"
@@ -80,13 +79,10 @@ void EpubReaderMenuActivity::loop() {
     }
 
     if (selectedAction == MenuAction::TOGGLE_BLUETOOTH) {
-      // Toggle in place and stay in the menu (no reader re-render needed).
+      // Just flip the preference and stay in the menu. The main-loop lifecycle check
+      // brings the BLE stack up/down to match (and shows the "BT Connecting..." popup),
+      // so start/stop has a single owner.
       SETTINGS.bluetoothEnabled = SETTINGS.bluetoothEnabled ? 0 : 1;
-      if (SETTINGS.bluetoothEnabled) {
-        bleinput::ensureStarted();
-      } else {
-        bleinput::stop();
-      }
       SETTINGS.saveToFile();
       requestUpdate();
       return;

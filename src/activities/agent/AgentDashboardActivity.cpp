@@ -139,6 +139,15 @@ uint32_t AgentDashboardActivity::computeStateSignature() const {
 }
 
 void AgentDashboardActivity::loop() {
+  // Handle input FIRST so Back stays responsive: the discovery/connect steps
+  // below can block (mDNS queryService ~1s, WS connect) and would otherwise
+  // starve the button poll, making "go back" feel dead while not yet connected.
+  handleButtons();
+  if (exitRequested) {
+    finish();
+    return;
+  }
+
   if (dashState == DashState::Discovering) {
     AgentDeck::Net::BridgeInfo bridge;
     if (AgentDeck::Net::mdnsPoll(bridge) && bridge.found) {
@@ -156,6 +165,7 @@ void AgentDashboardActivity::loop() {
     const bool nowConnected = AgentDeck::Net::wsConnected();
     if (nowConnected && dashState == DashState::Connecting) {
       dashState = DashState::Connected;
+      lastConnectedMs = millis();
       if (!registered) {
         sendClientRegister();
         registered = true;
@@ -174,13 +184,24 @@ void AgentDashboardActivity::loop() {
         requestUpdate();
       }
     } else if (!nowConnected && dashState == DashState::Connected) {
-      // Dropped (e.g. daemon restart, which may relocate its port). Re-resolve
-      // the daemon endpoint via mDNS rather than reconnecting to the old port.
-      AgentLog::line("AGENT", "ws dropped — re-resolving via mDNS");
-      AgentDeck::Net::wsDisconnect();
-      AgentDeck::Net::mdnsRefresh();
-      dashState = DashState::Discovering;
+      const uint32_t uptime = millis() - lastConnectedMs;
       registered = false;
+      if (uptime >= kHealthyUptimeMs) {
+        // Was a healthy connection that dropped (transient / daemon restart on the
+        // same port): retry the SAME endpoint — the ws_client library auto-reconnects
+        // to it. Avoids flapping across multiple daemons on the LAN. If it stays
+        // unreachable, the connect-timeout above falls back to a fresh mDNS resolve.
+        AgentLog::line("AGENT", "ws dropped after %ums — retrying same endpoint", (unsigned)uptime);
+        dashState = DashState::Connecting;
+        connectStartMs = millis();
+      } else {
+        // Endpoint accepted then dropped us quickly — a flaky/duplicate daemon.
+        // Re-resolve to try a different advertiser instead of hammering this one.
+        AgentLog::line("AGENT", "ws dropped after %ums — re-resolving (flaky endpoint)", (unsigned)uptime);
+        AgentDeck::Net::wsDisconnect();
+        AgentDeck::Net::mdnsRefresh();
+        dashState = DashState::Discovering;
+      }
       requestUpdate();
     }
 
@@ -192,13 +213,6 @@ void AgentDashboardActivity::loop() {
         requestUpdate();
       }
     }
-  }
-
-  handleButtons();
-
-  if (exitRequested) {
-    finish();
-    return;
   }
 }
 

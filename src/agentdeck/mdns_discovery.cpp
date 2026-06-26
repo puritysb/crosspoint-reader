@@ -40,48 +40,76 @@ bool mdnsPoll(BridgeInfo& out) {
   int n = MDNS.queryService(AgentDeckCfg::MDNS_SERVICE, AgentDeckCfg::MDNS_PROTO);
   if (n <= 0) return false;
 
-  // Prefer the daemon bridge (aggregates all sessions) over a session bridge.
-  int daemonIdx = -1;
-  int firstIdx = -1;
+  // Selection priority (robust to a dual-homed host + a duplicate fallback-port
+  // daemon, both of which the user's network exhibits):
+  //   1. agent=daemon on the CANONICAL port (9120). A daemon on a fallback port
+  //      (9121+) is usually a duplicate that failed to demote to client — prefer
+  //      the real one and ignore the duplicate so we don't flap between them.
+  //   2. any agent=daemon.
+  //   3. first service with a port.
+  int daemonIdx = -1, daemonCanonicalIdx = -1, firstIdx = -1;
   for (int i = 0; i < n; i++) {
-    if (MDNS.port(i) == 0) continue;
+    const uint16_t port = MDNS.port(i);
+    if (port == 0) continue;
     if (firstIdx < 0) firstIdx = i;
-    int numKeys = MDNS.numTxt(i);
-    for (int k = 0; k < numKeys; k++) {
+    bool isDaemon = false;
+    const int keys = MDNS.numTxt(i);
+    for (int k = 0; k < keys; k++) {
       if (MDNS.txtKey(i, k) == "agent" && MDNS.txt(i, k) == "daemon") {
-        daemonIdx = i;
+        isDaemon = true;
         break;
       }
     }
-    if (daemonIdx >= 0) break;
+    if (isDaemon) {
+      if (daemonIdx < 0) daemonIdx = i;
+      if (port == AgentDeckCfg::BRIDGE_DEFAULT_PORT && daemonCanonicalIdx < 0) daemonCanonicalIdx = i;
+    }
   }
 
-  int selected = (daemonIdx >= 0) ? daemonIdx : firstIdx;
+  int selected = (daemonCanonicalIdx >= 0) ? daemonCanonicalIdx : (daemonIdx >= 0 ? daemonIdx : firstIdx);
   if (selected < 0) return false;
 
-#if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 0, 0)
-  IPAddress ip = MDNS.address(selected);  // ESP-IDF 5.x (pioarduino / Arduino v3)
-#else
-  IPAddress ip = MDNS.IP(selected);
-#endif
-  snprintf(discovered.ip, sizeof(discovered.ip), "%d.%d.%d.%d", ip[0], ip[1], ip[2], ip[3]);
   discovered.port = MDNS.port(selected);
   discovered.found = true;
   discovered.token[0] = '\0';
   discovered.project[0] = '\0';
   discovered.agent[0] = '\0';
 
-  int numKeys = MDNS.numTxt(selected);
+  // Parse TXT, including the canonical `ip` the daemon publishes (its single
+  // default-route address).
+  char txtIp[16] = {0};
+  const int numKeys = MDNS.numTxt(selected);
   for (int k = 0; k < numKeys; k++) {
     String key = MDNS.txtKey(selected, k);
     String val = MDNS.txt(selected, k);
     if (key == "token") {
       strncpy(discovered.token, val.c_str(), sizeof(discovered.token) - 1);
+      discovered.token[sizeof(discovered.token) - 1] = '\0';
     } else if (key == "project") {
       strncpy(discovered.project, val.c_str(), sizeof(discovered.project) - 1);
+      discovered.project[sizeof(discovered.project) - 1] = '\0';
     } else if (key == "agent") {
       strncpy(discovered.agent, val.c_str(), sizeof(discovered.agent) - 1);
+      discovered.agent[sizeof(discovered.agent) - 1] = '\0';
+    } else if (key == "ip") {
+      strncpy(txtIp, val.c_str(), sizeof(txtIp) - 1);
+      txtIp[sizeof(txtIp) - 1] = '\0';
     }
+  }
+
+  // Prefer the TXT canonical IP over the host A-record: on a dual-homed daemon the
+  // hostname resolves to BOTH interface IPs (.60 and .100), which makes the device
+  // flip between them every reconnect. The TXT `ip=` is the single default-route addr.
+  if (txtIp[0]) {
+    strncpy(discovered.ip, txtIp, sizeof(discovered.ip) - 1);
+    discovered.ip[sizeof(discovered.ip) - 1] = '\0';
+  } else {
+#if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 0, 0)
+    IPAddress ip = MDNS.address(selected);  // ESP-IDF 5.x (pioarduino / Arduino v3)
+#else
+    IPAddress ip = MDNS.IP(selected);
+#endif
+    snprintf(discovered.ip, sizeof(discovered.ip), "%d.%d.%d.%d", ip[0], ip[1], ip[2], ip[3]);
   }
 
   AgentLog::line("MDNS", "found bridge %s:%u agent=%s project=%s", discovered.ip,

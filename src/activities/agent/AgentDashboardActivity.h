@@ -73,6 +73,11 @@ class AgentDashboardActivity final : public Activity {
   static constexpr uint32_t kConnectTimeoutMs = 10000;
   static constexpr uint32_t kExitHoldMs = 700;          // hold Back this long = exit while a card is up
   static constexpr uint32_t kDecisionCooldownMs = 400;  // debounce a sent decision
+  // A connection that survives longer than this is "healthy": on drop we retry the
+  // SAME endpoint (transient drop / daemon restart). A connection that dies sooner
+  // is a flaky/duplicate daemon — re-resolve via mDNS to try a different advertiser
+  // instead of hammering it (multiple daemons on the LAN round-robin otherwise).
+  static constexpr uint32_t kHealthyUptimeMs = 8000;
 
   DashState dashState = DashState::WifiSelection;
   std::string localIp;
@@ -80,6 +85,7 @@ class AgentDashboardActivity final : public Activity {
   bool registered = false;
   uint32_t lastSignature = 0;
   uint32_t connectStartMs = 0;
+  uint32_t lastConnectedMs = 0;  // when we last reached Connected (for healthy-vs-flaky drop)
 
   // Decision-card / triage cursors
   int triageIndex = 0;       // which awaiting session is shown

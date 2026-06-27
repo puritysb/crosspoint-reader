@@ -772,7 +772,11 @@ void AgentDashboardActivity::renderOverview(const OverviewRow* rows, int n, int 
   const int footTop = drawLimitsFooter();
   const int rowsBottom = (footTop < pageH ? footTop : pageH - m.buttonHintsHeight) - 8;
 
-  const int rowH = kGlyphPx + 12;     // glyph height; holds project + activity lines
+  // Row must contain the glyph AND two stacked text lines (project + activity)
+  // with margin, else the activity line spills below the selection box. Size to
+  // the taller of the glyph or the two-line text block.
+  const int twoLine = 4 + line10 + lineS + 4;
+  const int rowH = (kGlyphPx > twoLine ? kGlyphPx : twoLine) + 8;
   const int rowStride = rowH + 6;
   int maxVisible = (rowsBottom - (y + lineS + 8)) / rowStride;  // rows that fit below the conn line
   if (maxVisible < 1) maxVisible = 1;

@@ -306,6 +306,15 @@ void WifiSelectionActivity::loop() {
 
   // Check connection progress
   if (state == WifiSelectionState::CONNECTING || state == WifiSelectionState::AUTO_CONNECTING) {
+    // Let Back abort a slow/hanging connect instead of trapping the user on the
+    // "Connecting…" screen with no way out. Cancel the attempt and drop back to
+    // the network list (from which Back exits the activity).
+    if (mappedInput.wasPressed(MappedInputManager::Button::Back)) {
+      WiFi.disconnect();
+      autoConnecting = false;
+      startWifiScan();
+      return;
+    }
     checkConnectionStatus();
     return;
   }
@@ -569,6 +578,11 @@ void WifiSelectionActivity::renderConnecting(const Rect* screen, const ThemeMetr
       ssidInfo.replace(22, ssidInfo.length() - 22, "...");
     }
     UITheme::drawCenteredText(renderer, *screen, UI_10_FONT_ID, top, ssidInfo.c_str());
+
+    // Back is wired to cancel the connect (see loop()); surface it so the user
+    // isn't stranded on this screen with no visible way out.
+    const auto labels = mappedInput.mapLabels(tr(STR_CANCEL), "", "", "");
+    GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
   }
 }
 

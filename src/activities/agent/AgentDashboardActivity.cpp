@@ -5,6 +5,8 @@
 
 #include <cstdio>
 #include <cstring>
+#include <ctime>
+#include <string>
 
 #include "SilentRestart.h"
 #include "activities/network/WifiSelectionActivity.h"
@@ -24,7 +26,10 @@
 namespace {
 using AgentDeck::AgentState;
 
-constexpr int kGlyphPx = 28;  // per-agent creature glyph (src/components/icons/glyph_*.h)
+// Per-agent creature glyph (src/components/icons/glyph_*.h). MUST be a multiple of
+// 8: EInkDisplay::drawImageTransparent reads `width/8` bytes per row, so a width
+// like 28 (→ 3 bytes, but convert_icon.py packs 4) desyncs every row into noise.
+constexpr int kGlyphPx = 32;
 
 // Canonical 1-bit creature glyph for an agent type → nullptr falls back to a dot.
 // Mirrors the AGENT_MONO_GLYPH map (shared/src/svg-renderers/agent-logos.ts). Keep
@@ -36,6 +41,36 @@ const uint8_t* glyphForAgent(const char* a) {
   if (strcmp(a, "opencode") == 0) return GlyphOpenCode;
   if (strcmp(a, "openclaw") == 0) return GlyphOpenClaw;
   return nullptr;
+}
+
+// Format an ISO-8601 resetsAt as a compact "Xd Yh" / "Xh Ym" / "Xm" remaining,
+// or "" when the system clock isn't NTP-synced yet or the string won't parse.
+// configTime(0,0,…) keeps the zone at UTC so mktime() reads the (UTC "…Z") ISO
+// correctly. Best-effort: a missing/unsynced clock just drops the countdown.
+std::string formatResetRemaining(const char* iso) {
+  if (!iso || !iso[0]) return "";
+  const time_t now = time(nullptr);
+  if (now < 1700000000) return "";  // ~2023-11 — clock not yet synced
+  int Y, Mo, D, H, Mi, S;
+  if (sscanf(iso, "%d-%d-%dT%d:%d:%d", &Y, &Mo, &D, &H, &Mi, &S) != 6) return "";
+  struct tm tmv = {};
+  tmv.tm_year = Y - 1900;
+  tmv.tm_mon = Mo - 1;
+  tmv.tm_mday = D;
+  tmv.tm_hour = H;
+  tmv.tm_min = Mi;
+  tmv.tm_sec = S;
+  const time_t reset = mktime(&tmv);
+  if (reset <= now) return "now";
+  long secs = (long)(reset - now);
+  char buf[16];
+  if (secs >= 86400)
+    snprintf(buf, sizeof(buf), "%ldd %ldh", secs / 86400, (secs % 86400) / 3600);
+  else if (secs >= 3600)
+    snprintf(buf, sizeof(buf), "%ldh %ldm", secs / 3600, (secs % 3600) / 60);
+  else
+    snprintf(buf, sizeof(buf), "%ldm", secs / 60);
+  return buf;
 }
 
 // Compact, uppercase status badge for the overview rows.
@@ -117,6 +152,10 @@ void AgentDashboardActivity::onWifiSelectionComplete(const bool connected) {
 }
 
 void AgentDashboardActivity::startNetworking() {
+  // Best-effort clock for the LIMITS reset countdowns. Non-blocking — SNTP updates
+  // the system time in the background; until it lands, formatResetRemaining() just
+  // omits the countdown. UTC offset 0 so mktime() reads the ISO "…Z" resetsAt right.
+  configTime(0, 0, "pool.ntp.org", "time.google.com");
   AgentDeck::Net::mdnsInit();
   dashState = DashState::Discovering;
   requestUpdate();
@@ -161,10 +200,16 @@ uint32_t AgentDashboardActivity::computeStateSignature() const {
     h = fnvUpdate(h, s.sessions[i].state, strlen(s.sessions[i].state));
     h = fnvUpdate(h, s.sessions[i].requestId, strlen(s.sessions[i].requestId));
   }
-  // Usage so the LIMITS footer repaints when a quota gauge moves.
+  // Usage so the LIMITS footer repaints when a quota gauge / reset / subscription moves.
   h = fnvUpdate(h, &s.fiveHourPercent, sizeof(s.fiveHourPercent));
   h = fnvUpdate(h, &s.sevenDayPercent, sizeof(s.sevenDayPercent));
   h = fnvUpdate(h, &s.usageStale, sizeof(s.usageStale));
+  h = fnvUpdate(h, s.fiveHourReset, strlen(s.fiveHourReset));
+  h = fnvUpdate(h, s.sevenDayReset, strlen(s.sevenDayReset));
+  h = fnvUpdate(h, s.codexPlan, strlen(s.codexPlan));
+  h = fnvUpdate(h, s.codexActiveUntil, strlen(s.codexActiveUntil));
+  h = fnvUpdate(h, s.antigravityPlan, strlen(s.antigravityPlan));
+  h = fnvUpdate(h, &s.antigravityCredits, sizeof(s.antigravityCredits));
   AgentDeck::unlockState();
   // Local view/cursor state so navigation repaints.
   uint8_t vm = static_cast<uint8_t>(viewMode);
@@ -383,12 +428,12 @@ void AgentDashboardActivity::handleButtons() {
 
     // Up/Down: move the option cursor (option prompt) or page between awaiting
     // sessions (triage) — re-pinning selectedSid so the card follows the page.
-    if (mappedInput.wasReleased(Btn::Up)) {
+    if (mappedInput.wasReleased(Btn::NavPrevious)) {
       if (optMode) optionCursor = (optionCursor - 1 + optCount) % optCount;
       else if (n > 1) { idx = (idx - 1 + n) % n; strncpy(selectedSid, items[idx].sid, sizeof(selectedSid) - 1); optionCursor = 0; }
       requestUpdate();
     }
-    if (mappedInput.wasReleased(Btn::Down)) {
+    if (mappedInput.wasReleased(Btn::NavNext)) {
       if (optMode) optionCursor = (optionCursor + 1) % optCount;
       else if (n > 1) { idx = (idx + 1) % n; strncpy(selectedSid, items[idx].sid, sizeof(selectedSid) - 1); optionCursor = 0; }
       requestUpdate();
@@ -435,11 +480,11 @@ void AgentDashboardActivity::handleButtons() {
   if (overviewCursor >= n) overviewCursor = n > 0 ? n - 1 : 0;
   if (overviewCursor < 0) overviewCursor = 0;
 
-  if (mappedInput.wasReleased(Btn::Up) && n > 1) {
+  if (mappedInput.wasReleased(Btn::NavPrevious) && n > 1) {
     overviewCursor = (overviewCursor - 1 + n) % n;
     requestUpdate();
   }
-  if (mappedInput.wasReleased(Btn::Down) && n > 1) {
+  if (mappedInput.wasReleased(Btn::NavNext) && n > 1) {
     overviewCursor = (overviewCursor + 1) % n;
     requestUpdate();
   }
@@ -482,54 +527,120 @@ void AgentDashboardActivity::applyDecision(const AwaitingItem& it, bool approve,
 void AgentDashboardActivity::drawBrandedHeader(const char* title, const char* subtitle) const {
   const auto& m = UITheme::getInstance().getMetrics();
   const int w = renderer.getScreenWidth();
-  GUI.drawHeader(renderer, Rect{0, m.topPadding, w, m.headerHeight}, title, subtitle);
-  // AgentDeck mark at the left of the header (battery sits at the right, title centered).
-  constexpr int sz = 32;
-  renderer.drawIcon(AgentDeckMark, m.contentSidePadding, m.topPadding + (m.headerHeight - sz) / 2, sz, sz);
+  const Rect r{0, m.topPadding, w, m.headerHeight};
+  // Pass nullptr title: Lyra's drawHeader draws the title at contentSidePadding —
+  // exactly where our mark goes — and also owns the divider line (it lives inside
+  // its `if (title)` block). So we let drawHeader place the battery + subtitle, then
+  // lay out the mark + wordmark together on one line and redraw the divider.
+  GUI.drawHeader(renderer, r, nullptr, subtitle);
+
+  constexpr int sz = 32;  // mark width must be a multiple of 8 (see kGlyphPx note)
+  const int iconY = r.y + (m.headerHeight - sz) / 2 - 2;
+  renderer.drawIcon(AgentDeckMark, m.contentSidePadding, iconY, sz, sz);
+
+  if (title) {
+    const int line12 = renderer.getLineHeight(UI_12_FONT_ID);
+    const int titleX = m.contentSidePadding + sz + 10;
+    const int titleY = r.y + (m.headerHeight - line12) / 2;
+    renderer.drawText(UI_12_FONT_ID, titleX, titleY, title, true, EpdFontFamily::BOLD);
+  }
+  // Divider, matching LyraTheme::drawHeader (3px rule along the header baseline).
+  renderer.drawLine(r.x, r.y + r.height - 3, r.x + r.width - 1, r.y + r.height - 3, 3, true);
 }
 
 int AgentDashboardActivity::drawLimitsFooter() const {
-  float five, seven;
+  // Snapshot usage + the best-effort subscription summary under the lock.
+  float five, seven, agCredits;
   bool stale;
+  char fiveReset[32], sevenReset[32], codexPlan[16], codexUntil[32], agPlan[24];
   AgentDeck::lockState();
-  five = AgentDeck::g_state.fiveHourPercent;
-  seven = AgentDeck::g_state.sevenDayPercent;
-  stale = AgentDeck::g_state.usageStale;
+  const auto& s = AgentDeck::g_state;
+  five = s.fiveHourPercent;
+  seven = s.sevenDayPercent;
+  stale = s.usageStale;
+  agCredits = s.antigravityCredits;
+  strncpy(fiveReset, s.fiveHourReset, sizeof(fiveReset) - 1);
+  fiveReset[sizeof(fiveReset) - 1] = '\0';
+  strncpy(sevenReset, s.sevenDayReset, sizeof(sevenReset) - 1);
+  sevenReset[sizeof(sevenReset) - 1] = '\0';
+  strncpy(codexPlan, s.codexPlan, sizeof(codexPlan) - 1);
+  codexPlan[sizeof(codexPlan) - 1] = '\0';
+  strncpy(codexUntil, s.codexActiveUntil, sizeof(codexUntil) - 1);
+  codexUntil[sizeof(codexUntil) - 1] = '\0';
+  strncpy(agPlan, s.antigravityPlan, sizeof(agPlan) - 1);
+  agPlan[sizeof(agPlan) - 1] = '\0';
   AgentDeck::unlockState();
 
+  // Compose the optional other-agent subscription line (ChatGPT plan/expiry,
+  // Antigravity credits). Empty when the hub sent none of it.
+  char subLine[96] = {0};
+  int off = 0;
+  if (codexPlan[0] || codexUntil[0]) {
+    off += snprintf(subLine + off, sizeof(subLine) - off, "ChatGPT");
+    if (codexPlan[0]) off += snprintf(subLine + off, sizeof(subLine) - off, " %s", codexPlan);
+    if (codexUntil[0]) {
+      char d[11] = {0};
+      strncpy(d, codexUntil, 10);  // YYYY-MM-DD portion of the ISO date
+      off += snprintf(subLine + off, sizeof(subLine) - off, " \xE2\x86\x92 %s", d);
+    }
+  }
+  if (agCredits >= 0 || agPlan[0]) {
+    if (off > 0) off += snprintf(subLine + off, sizeof(subLine) - off, "   \xC2\xB7   ");
+    if (agCredits >= 0)
+      off += snprintf(subLine + off, sizeof(subLine) - off, "AG %d cr", (int)(agCredits + 0.5f));
+    else
+      off += snprintf(subLine + off, sizeof(subLine) - off, "AG %s", agPlan);
+  }
+
   const int pageH = renderer.getScreenHeight();
-  if (five < 0 && seven < 0) return pageH;  // hub supplies no usage → hide the footer
+  const bool hasUsage = (five >= 0 || seven >= 0);
+  const bool hasSub = subLine[0] != '\0';
+  if (!hasUsage && !hasSub) return pageH;  // nothing to show → hide the footer
 
   const auto& m = UITheme::getInstance().getMetrics();
   const int w = renderer.getScreenWidth();
   const int pad = m.contentSidePadding;
   const int lineS = renderer.getLineHeight(SMALL_FONT_ID);
-  const int bandH = lineS + 22;
+  const int rowCount = (hasUsage ? 1 : 0) + (hasSub ? 1 : 0);
+  const int bandH = 14 + rowCount * (lineS + 6);
   const int top = pageH - m.buttonHintsHeight - bandH;
 
-  renderer.drawLine(pad, top, w - pad, top);  // separator above the gauges
-  const int gy = top + 12;
+  renderer.drawLine(pad, top, w - pad, top);  // separator above the footer
+  int y = top + 12;
   const int colW = (w - pad * 2 - 16) / 2;  // two columns (5H | 7D)
 
-  auto quota = [&](int x, const char* label, float pct) {
-    if (pct < 0) return;
-    renderer.drawText(SMALL_FONT_ID, x, gy, label, true, EpdFontFamily::BOLD);
-    const int lw = renderer.getTextWidth(SMALL_FONT_ID, label, EpdFontFamily::BOLD);
-    char pc[12];
-    snprintf(pc, sizeof(pc), "%d%%%s", (int)(pct + 0.5f), stale ? "*" : "");
-    const int pw = renderer.getTextWidth(SMALL_FONT_ID, pc);
-    const int gx = x + lw + 8;
-    const int gw = colW - lw - 8 - pw - 8;
-    const int gh = lineS - 4;
-    if (gw > 8) {
-      renderer.drawRect(gx, gy + 1, gw, gh);
-      const int fw = (int)((gw - 2) * (pct / 100.0f));
-      if (fw > 0) renderer.fillRect(gx + 1, gy + 2, fw, gh - 2);
-    }
-    renderer.drawText(SMALL_FONT_ID, x + colW - pw, gy, pc, true);
-  };
-  quota(pad, "5H", five);
-  quota(pad + colW + 16, "7D", seven);
+  if (hasUsage) {
+    auto quota = [&](int x, const char* label, float pct, const char* iso) {
+      if (pct < 0) return;
+      // Right-aligned "NN% · Xh Ym"; the gauge fills the space between.
+      std::string rem = formatResetRemaining(iso);
+      char rt[28];
+      if (!rem.empty())
+        snprintf(rt, sizeof(rt), "%d%%%s  %s", (int)(pct + 0.5f), stale ? "*" : "", rem.c_str());
+      else
+        snprintf(rt, sizeof(rt), "%d%%%s", (int)(pct + 0.5f), stale ? "*" : "");
+      renderer.drawText(SMALL_FONT_ID, x, y, label, true, EpdFontFamily::BOLD);
+      const int lw = renderer.getTextWidth(SMALL_FONT_ID, label, EpdFontFamily::BOLD);
+      const int rw = renderer.getTextWidth(SMALL_FONT_ID, rt);
+      const int gx = x + lw + 8;
+      const int gw = colW - lw - 8 - rw - 8;
+      const int gh = lineS - 4;
+      if (gw > 8) {
+        renderer.drawRect(gx, y + 1, gw, gh);
+        const int fw = (int)((gw - 2) * (pct / 100.0f));
+        if (fw > 0) renderer.fillRect(gx + 1, y + 2, fw, gh - 2);
+      }
+      renderer.drawText(SMALL_FONT_ID, x + colW - rw, y, rt, true);
+    };
+    quota(pad, "5H", five, fiveReset);
+    quota(pad + colW + 16, "7D", seven, sevenReset);
+    y += lineS + 6;
+  }
+
+  if (hasSub) {
+    renderer.drawText(SMALL_FONT_ID, pad, y,
+                      renderer.truncatedText(SMALL_FONT_ID, subLine, w - pad * 2).c_str(), true);
+  }
   return top;
 }
 

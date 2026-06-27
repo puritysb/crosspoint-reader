@@ -133,6 +133,19 @@ void handleUsageUpdate(JsonObject& obj) {
   storeReset("fiveHourResetsAt", g_state.fiveHourReset, sizeof(g_state.fiveHourReset));
   storeReset("sevenDayResetsAt", g_state.sevenDayReset, sizeof(g_state.sevenDayReset));
 
+  // Other-agent subscription/limit summary (best-effort — only some hubs send it).
+  storeReset("codexPlanType", g_state.codexPlan, sizeof(g_state.codexPlan));
+  storeReset("codexSubscriptionActiveUntil", g_state.codexActiveUntil, sizeof(g_state.codexActiveUntil));
+  g_state.antigravityPlan[0] = '\0';
+  g_state.antigravityCredits = -1.0f;
+  if (obj["antigravityStatus"].is<JsonObject>()) {
+    JsonObject ag = obj["antigravityStatus"].as<JsonObject>();
+    if (ag["planName"].is<const char*>())
+      copyStr(g_state.antigravityPlan, sizeof(g_state.antigravityPlan), ag["planName"].as<const char*>());
+    if (ag["availableCredits"].is<float>())
+      g_state.antigravityCredits = ag["availableCredits"].as<float>();
+  }
+
   unlockState();
 }
 

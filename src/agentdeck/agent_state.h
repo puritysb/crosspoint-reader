@@ -101,14 +101,21 @@ struct DashboardState {
   // Usage (from usage_update)
   float fiveHourPercent;     // 0-100, -1 = no data
   float sevenDayPercent;     // 0-100, -1 = no data
-  char fiveHourReset[20];
-  char sevenDayReset[20];
+  char fiveHourReset[32];    // ISO-8601 resetsAt (verbatim; firmware formats remaining)
+  char sevenDayReset[32];
   uint32_t inputTokens;
   uint32_t outputTokens;
   uint32_t toolCalls;
   uint32_t sessionDurationSec;
   float estimatedCostUsd;
   bool usageStale;
+
+  // Other-agent subscription / limit summary (best-effort; only present when the
+  // hub supplies it). Empty string / -1 = no data.
+  char codexPlan[16];          // ChatGPT/Codex plan ("plus", "pro", …)
+  char codexActiveUntil[32];   // ISO date the ChatGPT subscription is active until
+  char antigravityPlan[24];    // Antigravity plan name
+  float antigravityCredits;    // Antigravity available credits, -1 = no data
 
   // Sessions (multi-agent). Cap matches AgentDeckCfg::SESSIONS_CAP.
   SessionInfo sessions[AgentDeckCfg::SESSIONS_CAP];
@@ -126,6 +133,7 @@ struct DashboardState {
     fiveHourPercent = -1.0f;
     sevenDayPercent = -1.0f;
     estimatedCostUsd = -1.0f;
+    antigravityCredits = -1.0f;
   }
 
   // Called while g_stateMutex is held. Clears volatile bridge data so every
@@ -152,6 +160,10 @@ struct DashboardState {
     sevenDayPercent = -1.0f;
     fiveHourReset[0] = '\0';
     sevenDayReset[0] = '\0';
+    codexPlan[0] = '\0';
+    codexActiveUntil[0] = '\0';
+    antigravityPlan[0] = '\0';
+    antigravityCredits = -1.0f;
     usageStale = true;
     dataReceived = false;
   }

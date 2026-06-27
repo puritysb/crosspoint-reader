@@ -12,6 +12,7 @@
 
 #include "RecentBooksStore.h"
 #include "components/UITheme.h"
+#include "components/icons/agentdeck_mark.h"
 #include "components/icons/book.h"
 #include "components/icons/book24.h"
 #include "components/icons/bookmark.h"
@@ -72,6 +73,8 @@ const uint8_t* iconForName(UIIcon icon, int size) {
         return LibraryIcon;
       case UIIcon::Wifi:
         return WifiIcon;
+      case UIIcon::AgentMark:
+        return AgentDeckMark;
       case UIIcon::Hotspot:
         return HotspotIcon;
       case UIIcon::Bookmark:

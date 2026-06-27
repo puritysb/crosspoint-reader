@@ -26,10 +26,16 @@ bool buildSelectOption(char* out, size_t cap, const char* sid, int index);
 // {"type":"session_command","sessionId":"<sid>","command":{"type":"escape"}}
 bool buildSessionEscape(char* out, size_t cap, const char* sid);
 
+// {"type":"query_session_timeline","sessionId":"<sid>"} — request a session's
+// recent timeline so Detail can fill on connect (daemon replies with a
+// timeline_history scoped to this session).
+bool buildQuerySessionTimeline(char* out, size_t cap, const char* sid);
+
 // ── queue wrappers (enqueue on the ws_client outbox) ───────────────────────
 void sendPermissionDecision(const char* requestId, const char* decision);
 void sendSelectOption(const char* sid, int index);
 void sendSessionEscape(const char* sid);
+void sendQuerySessionTimeline(const char* sid);
 
 // Approve/deny that works against both daemons AND both prompt shapes:
 //   • Observed gate (requestId present) → permission_decision allow/deny.

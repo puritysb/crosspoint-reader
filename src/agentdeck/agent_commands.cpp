@@ -42,6 +42,16 @@ bool buildSessionEscape(char* out, size_t cap, const char* sid) {
   return n > 0 && (size_t)n < cap;
 }
 
+bool buildQuerySessionTimeline(char* out, size_t cap, const char* sid) {
+  if (!out || cap == 0) return false;
+  if (!sid || !sid[0]) {
+    out[0] = '\0';
+    return false;
+  }
+  int n = snprintf(out, cap, "{\"type\":\"query_session_timeline\",\"sessionId\":\"%s\"}", sid);
+  return n > 0 && (size_t)n < cap;
+}
+
 void sendPermissionDecision(const char* requestId, const char* decision) {
   char buf[160];
   if (buildPermissionDecision(buf, sizeof(buf), requestId, decision)) Net::queueOutbound(buf);
@@ -50,6 +60,11 @@ void sendPermissionDecision(const char* requestId, const char* decision) {
 void sendSelectOption(const char* sid, int index) {
   char buf[96];
   if (buildSelectOption(buf, sizeof(buf), sid, index)) Net::queueOutbound(buf);
+}
+
+void sendQuerySessionTimeline(const char* sid) {
+  char buf[160];
+  if (buildQuerySessionTimeline(buf, sizeof(buf), sid)) Net::queueOutbound(buf);
 }
 
 void sendSessionEscape(const char* sid) {

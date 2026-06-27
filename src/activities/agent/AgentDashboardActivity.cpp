@@ -516,6 +516,9 @@ void AgentDashboardActivity::handleButtons() {
     optionCursor = 0;
     detailScroll = 0;
     viewMode = sel.awaiting ? ViewMode::Card : ViewMode::Detail;
+    // Detail shows the session timeline. The live timeline_event stream is
+    // forward-only, so request this session's recent history to fill it on open.
+    if (viewMode == ViewMode::Detail) AgentDeck::Commands::sendQuerySessionTimeline(selectedSid);
     requestUpdate();
   }
 

@@ -222,6 +222,29 @@ void handleTimelineEvent(JsonObject& obj) {
   unlockState();
 }
 
+// Reply to query_session_timeline: a batch of recent entries for one session
+// (oldest→newest). Loads them into the ring so Detail fills on connect; the ring
+// is bounded so the most recent TIMELINE_CAP entries win.
+void handleTimelineHistory(JsonObject& obj) {
+  JsonArray entries = obj["entries"].as<JsonArray>();
+  if (entries.isNull()) return;
+  lockState();
+  for (JsonObject e : entries) {
+    const char* sid = e["sessionId"] | "";
+    const char* raw = e["raw"] | "";
+    const char* etype = e["type"] | "";
+    if (sid[0] == '\0') continue;
+    if (raw[0] == '\0' && etype[0] == '\0') continue;
+    TimelineItem& it = g_state.timeline[g_state.timelineHead];
+    copyStr(it.sid, sizeof(it.sid), sid);
+    copyStr(it.text, sizeof(it.text), raw);
+    copyStr(it.type, sizeof(it.type), etype);
+    g_state.timelineHead = (g_state.timelineHead + 1) % DashboardState::TIMELINE_CAP;
+    if (g_state.timelineCount < DashboardState::TIMELINE_CAP) g_state.timelineCount++;
+  }
+  unlockState();
+}
+
 }  // namespace
 
 namespace Protocol {
@@ -254,6 +277,8 @@ void parseMessage(const char* json, size_t length) {
     handleUsageUpdate(obj);
   } else if (strcmp(type, "timeline_event") == 0) {
     handleTimelineEvent(obj);
+  } else if (strcmp(type, "timeline_history") == 0) {
+    handleTimelineHistory(obj);
   } else if (strcmp(type, "connection") == 0 || strcmp(type, "connected") == 0) {
     // Connection ack — actual connect/disconnect is tracked by the WS event
     // callbacks. Logged for diagnostics.

@@ -14,10 +14,39 @@
 #include "agentdeck/mdns_discovery.h"
 #include "agentdeck/ws_client.h"
 #include "components/UITheme.h"  // GUI (theme) + ThemeMetrics + Rect
+#include "components/icons/agentdeck_mark.h"
+#include "components/icons/glyph_claude.h"
+#include "components/icons/glyph_codex.h"
+#include "components/icons/glyph_openclaw.h"
+#include "components/icons/glyph_opencode.h"
 #include "fontIds.h"
 
 namespace {
 using AgentDeck::AgentState;
+
+constexpr int kGlyphPx = 28;  // per-agent creature glyph (src/components/icons/glyph_*.h)
+
+// Canonical 1-bit creature glyph for an agent type → nullptr falls back to a dot.
+// Mirrors the AGENT_MONO_GLYPH map (shared/src/svg-renderers/agent-logos.ts). Keep
+// every wire agentType covered here — a missing branch silently degrades to a dot.
+const uint8_t* glyphForAgent(const char* a) {
+  if (!a || !a[0]) return nullptr;
+  if (strcmp(a, "claude-code") == 0) return GlyphClaude;
+  if (strncmp(a, "codex", 5) == 0) return GlyphCodex;  // codex-cli / codex-app / codex
+  if (strcmp(a, "opencode") == 0) return GlyphOpenCode;
+  if (strcmp(a, "openclaw") == 0) return GlyphOpenClaw;
+  return nullptr;
+}
+
+// Compact, uppercase status badge for the overview rows.
+const char* stateBadge(const char* s) {
+  if (!s || !s[0]) return "—";
+  if (strncmp(s, "awaiting", 8) == 0) return "AWAITING";
+  if (strcmp(s, "processing") == 0) return "WORKING";
+  if (strcmp(s, "idle") == 0) return "IDLE";
+  if (strcmp(s, "disconnected") == 0) return "OFFLINE";
+  return s;
+}
 
 // FNV-1a over a byte range — cheap change-detection signature.
 inline uint32_t fnvUpdate(uint32_t h, const void* data, size_t len) {
@@ -132,10 +161,17 @@ uint32_t AgentDashboardActivity::computeStateSignature() const {
     h = fnvUpdate(h, s.sessions[i].state, strlen(s.sessions[i].state));
     h = fnvUpdate(h, s.sessions[i].requestId, strlen(s.sessions[i].requestId));
   }
-  // Local cursors so triage/option navigation repaints.
+  // Usage so the LIMITS footer repaints when a quota gauge moves.
+  h = fnvUpdate(h, &s.fiveHourPercent, sizeof(s.fiveHourPercent));
+  h = fnvUpdate(h, &s.sevenDayPercent, sizeof(s.sevenDayPercent));
+  h = fnvUpdate(h, &s.usageStale, sizeof(s.usageStale));
+  AgentDeck::unlockState();
+  // Local view/cursor state so navigation repaints.
+  uint8_t vm = static_cast<uint8_t>(viewMode);
+  h = fnvUpdate(h, &vm, sizeof(vm));
+  h = fnvUpdate(h, &overviewCursor, sizeof(overviewCursor));
   h = fnvUpdate(h, &triageIndex, sizeof(triageIndex));
   h = fnvUpdate(h, &optionCursor, sizeof(optionCursor));
-  AgentDeck::unlockState();
   return h;
 }
 
@@ -275,70 +311,151 @@ int AgentDashboardActivity::collectAwaiting(AwaitingItem* out, int cap) const {
   return n;
 }
 
+int AgentDashboardActivity::collectOverview(OverviewRow* out, int cap) const {
+  auto cp = [](char* d, size_t n, const char* s) {
+    strncpy(d, s, n - 1);
+    d[n - 1] = '\0';
+  };
+  int n = 0;
+  AgentDeck::lockState();
+  const auto& s = AgentDeck::g_state;
+  for (uint8_t i = 0; i < s.sessionCount && n < cap; i++) {
+    const auto& se = s.sessions[i];
+    if (!se.alive) continue;
+    OverviewRow& o = out[n++];
+    cp(o.sid, sizeof(o.sid), se.id);
+    cp(o.project, sizeof(o.project), se.projectName[0] ? se.projectName : "session");
+    cp(o.agentType, sizeof(o.agentType), se.agentType);
+    cp(o.state, sizeof(o.state), se.state);
+    o.awaiting = (strncmp(se.state, "awaiting", 8) == 0);
+  }
+  // Observed/single-session fallback: sessions_list empty but a focused
+  // state_update is live — surface it as one row so the overview isn't blank.
+  if (n == 0 && cap > 0 && s.dataReceived && s.state != AgentState::DISCONNECTED) {
+    OverviewRow& o = out[n++];
+    cp(o.sid, sizeof(o.sid), s.sessionId[0] ? s.sessionId : s.focusedSessionId);
+    cp(o.project, sizeof(o.project), s.projectName[0] ? s.projectName : "session");
+    cp(o.agentType, sizeof(o.agentType), s.agentType);
+    const bool aw = s.state == AgentState::AWAITING_PERMISSION || s.state == AgentState::AWAITING_OPTION ||
+                    s.state == AgentState::AWAITING_DIFF;
+    cp(o.state, sizeof(o.state),
+       aw ? "awaiting" : (s.state == AgentState::PROCESSING ? "processing" : "idle"));
+    o.awaiting = aw;
+  }
+  AgentDeck::unlockState();
+  return n;
+}
+
 void AgentDashboardActivity::handleButtons() {
   using Btn = MappedInputManager::Button;
 
-  AwaitingItem items[kAwaitingCap];
-  const int n = (dashState == DashState::Connected) ? collectAwaiting(items, kAwaitingCap) : 0;
-
-  // Stamp Back press so release can tell short(=deny) from long(=exit).
+  // Stamp Back press so release can tell short from long-hold.
   if (mappedInput.wasPressed(Btn::Back)) backPressMs = millis();
 
-  if (n == 0) {
-    // Nothing to decide → Back exits the dashboard. Guard against a stale release
-    // whose press began in a prior activity (no recorded press → backPressMs==0).
+  // Not connected yet (WiFi select / discovering / connecting): the only action is
+  // Back = leave the dashboard. Keep it responsive in every pre-Connected state so
+  // the user is never trapped on a "searching…" screen with no way out.
+  if (dashState != DashState::Connected) {
     if (mappedInput.wasReleased(Btn::Back) && backPressMs != 0) exitRequested = true;
     return;
   }
 
-  // ── Decision-card / triage mode ──
-  if (triageIndex >= n) triageIndex = n - 1;
-  if (triageIndex < 0) triageIndex = 0;
-  const AwaitingItem& it = items[triageIndex];
-  const bool optMode = it.isFocused && it.isOption && it.optionCount > 0;
-  const int optCount = optMode ? it.optionCount : 0;
-  if (optMode) {
-    if (optionCursor >= optCount) optionCursor = optCount - 1;
-    if (optionCursor < 0) optionCursor = 0;
-  }
-
-  // Up/Down (the two hinted nav buttons) are contextual: move the option cursor
-  // when the card has options, otherwise page between awaiting sessions (triage).
-  if (mappedInput.wasReleased(Btn::Up)) {
-    if (optMode) optionCursor = (optionCursor - 1 + optCount) % optCount;
-    else if (n > 1) triageIndex = (triageIndex - 1 + n) % n;
-    requestUpdate();
-  }
-  if (mappedInput.wasReleased(Btn::Down)) {
-    if (optMode) optionCursor = (optionCursor + 1) % optCount;
-    else if (n > 1) {
-      triageIndex = (triageIndex + 1) % n;
+  // ── CARD: a session opened for a go/no-go decision (or option pick) ──
+  if (viewMode == ViewMode::Card) {
+    AwaitingItem items[kAwaitingCap];
+    const int n = collectAwaiting(items, kAwaitingCap);
+    int idx = -1;
+    for (int i = 0; i < n; i++)
+      if (selectedSid[0] && strcmp(items[i].sid, selectedSid) == 0) { idx = i; break; }
+    if (n == 0 || idx < 0) {  // decision resolved / session gone → back to overview
+      viewMode = ViewMode::Overview;
+      requestUpdate();
+      return;
     }
-    requestUpdate();
-  }
-
-  // Confirm = approve (yes/no) or select the highlighted option.
-  if (mappedInput.wasReleased(Btn::Confirm)) {
+    triageIndex = idx;
+    const AwaitingItem& it = items[idx];
+    const bool optMode = it.isFocused && it.isOption && it.optionCount > 0;
+    const int optCount = optMode ? it.optionCount : 0;
     if (optMode) {
-      int optIndex = optionCursor;
-      AgentDeck::lockState();
-      if (optionCursor < AgentDeck::g_state.optionCount) optIndex = AgentDeck::g_state.options[optionCursor].index;
-      AgentDeck::unlockState();
-      applyDecision(it, true, optIndex);
-    } else {
-      applyDecision(it, true, -1);
+      if (optionCursor >= optCount) optionCursor = optCount - 1;
+      if (optionCursor < 0) optionCursor = 0;
     }
+
+    // Up/Down: move the option cursor (option prompt) or page between awaiting
+    // sessions (triage) — re-pinning selectedSid so the card follows the page.
+    if (mappedInput.wasReleased(Btn::Up)) {
+      if (optMode) optionCursor = (optionCursor - 1 + optCount) % optCount;
+      else if (n > 1) { idx = (idx - 1 + n) % n; strncpy(selectedSid, items[idx].sid, sizeof(selectedSid) - 1); optionCursor = 0; }
+      requestUpdate();
+    }
+    if (mappedInput.wasReleased(Btn::Down)) {
+      if (optMode) optionCursor = (optionCursor + 1) % optCount;
+      else if (n > 1) { idx = (idx + 1) % n; strncpy(selectedSid, items[idx].sid, sizeof(selectedSid) - 1); optionCursor = 0; }
+      requestUpdate();
+    }
+
+    // Confirm = approve / select the highlighted option.
+    if (mappedInput.wasReleased(Btn::Confirm)) {
+      if (optMode) {
+        int optIndex = optionCursor;
+        AgentDeck::lockState();
+        if (optionCursor < AgentDeck::g_state.optionCount) optIndex = AgentDeck::g_state.options[optionCursor].index;
+        AgentDeck::unlockState();
+        applyDecision(items[idx], true, optIndex);
+      } else {
+        applyDecision(items[idx], true, -1);
+      }
+    }
+
+    // Back: short press = deny; long hold = back to overview (don't exit dashboard).
+    if (mappedInput.wasReleased(Btn::Back)) {
+      const uint32_t held = millis() - backPressMs;
+      if (held >= kExitHoldMs) {
+        viewMode = ViewMode::Overview;
+        requestUpdate();
+      } else {
+        applyDecision(items[idx], false, -1);
+      }
+    }
+    return;
   }
 
-  // Back: short press = deny, long hold = exit.
-  if (mappedInput.wasReleased(Btn::Back)) {
-    const uint32_t held = millis() - backPressMs;
-    if (held >= kExitHoldMs) {
-      exitRequested = true;
-    } else {
-      applyDecision(it, false, -1);
+  // ── DETAIL: read-only session inspector ──
+  if (viewMode == ViewMode::Detail) {
+    if (mappedInput.wasReleased(Btn::Back)) {
+      viewMode = ViewMode::Overview;
+      requestUpdate();
     }
+    return;
   }
+
+  // ── OVERVIEW: mission-control list (home) ──
+  OverviewRow rows[AgentDeckCfg::SESSIONS_CAP];
+  const int n = collectOverview(rows, AgentDeckCfg::SESSIONS_CAP);
+  if (overviewCursor >= n) overviewCursor = n > 0 ? n - 1 : 0;
+  if (overviewCursor < 0) overviewCursor = 0;
+
+  if (mappedInput.wasReleased(Btn::Up) && n > 1) {
+    overviewCursor = (overviewCursor - 1 + n) % n;
+    requestUpdate();
+  }
+  if (mappedInput.wasReleased(Btn::Down) && n > 1) {
+    overviewCursor = (overviewCursor + 1) % n;
+    requestUpdate();
+  }
+
+  // Confirm opens the selected row: awaiting → Card, otherwise → Detail.
+  if (mappedInput.wasReleased(Btn::Confirm) && n > 0) {
+    const OverviewRow& sel = rows[overviewCursor];
+    strncpy(selectedSid, sel.sid, sizeof(selectedSid) - 1);
+    selectedSid[sizeof(selectedSid) - 1] = '\0';
+    optionCursor = 0;
+    viewMode = sel.awaiting ? ViewMode::Card : ViewMode::Detail;
+    requestUpdate();
+  }
+
+  // Back exits the dashboard (guard a stale release from a prior activity).
+  if (mappedInput.wasReleased(Btn::Back) && backPressMs != 0) exitRequested = true;
 }
 
 void AgentDashboardActivity::applyDecision(const AwaitingItem& it, bool approve, int optionIndex) {
@@ -362,26 +479,90 @@ void AgentDashboardActivity::applyDecision(const AwaitingItem& it, bool approve,
   requestUpdate();
 }
 
+void AgentDashboardActivity::drawBrandedHeader(const char* title, const char* subtitle) const {
+  const auto& m = UITheme::getInstance().getMetrics();
+  const int w = renderer.getScreenWidth();
+  GUI.drawHeader(renderer, Rect{0, m.topPadding, w, m.headerHeight}, title, subtitle);
+  // AgentDeck mark at the left of the header (battery sits at the right, title centered).
+  constexpr int sz = 32;
+  renderer.drawIcon(AgentDeckMark, m.contentSidePadding, m.topPadding + (m.headerHeight - sz) / 2, sz, sz);
+}
+
+int AgentDashboardActivity::drawLimitsFooter() const {
+  float five, seven;
+  bool stale;
+  AgentDeck::lockState();
+  five = AgentDeck::g_state.fiveHourPercent;
+  seven = AgentDeck::g_state.sevenDayPercent;
+  stale = AgentDeck::g_state.usageStale;
+  AgentDeck::unlockState();
+
+  const int pageH = renderer.getScreenHeight();
+  if (five < 0 && seven < 0) return pageH;  // hub supplies no usage → hide the footer
+
+  const auto& m = UITheme::getInstance().getMetrics();
+  const int w = renderer.getScreenWidth();
+  const int pad = m.contentSidePadding;
+  const int lineS = renderer.getLineHeight(SMALL_FONT_ID);
+  const int bandH = lineS + 22;
+  const int top = pageH - m.buttonHintsHeight - bandH;
+
+  renderer.drawLine(pad, top, w - pad, top);  // separator above the gauges
+  const int gy = top + 12;
+  const int colW = (w - pad * 2 - 16) / 2;  // two columns (5H | 7D)
+
+  auto quota = [&](int x, const char* label, float pct) {
+    if (pct < 0) return;
+    renderer.drawText(SMALL_FONT_ID, x, gy, label, true, EpdFontFamily::BOLD);
+    const int lw = renderer.getTextWidth(SMALL_FONT_ID, label, EpdFontFamily::BOLD);
+    char pc[12];
+    snprintf(pc, sizeof(pc), "%d%%%s", (int)(pct + 0.5f), stale ? "*" : "");
+    const int pw = renderer.getTextWidth(SMALL_FONT_ID, pc);
+    const int gx = x + lw + 8;
+    const int gw = colW - lw - 8 - pw - 8;
+    const int gh = lineS - 4;
+    if (gw > 8) {
+      renderer.drawRect(gx, gy + 1, gw, gh);
+      const int fw = (int)((gw - 2) * (pct / 100.0f));
+      if (fw > 0) renderer.fillRect(gx + 1, gy + 2, fw, gh - 2);
+    }
+    renderer.drawText(SMALL_FONT_ID, x + colW - pw, gy, pc, true);
+  };
+  quota(pad, "5H", five);
+  quota(pad + colW + 16, "7D", seven);
+  return top;
+}
+
 void AgentDashboardActivity::renderCard(const AwaitingItem& it, int idx, int total) {
   const auto& metrics = UITheme::getInstance().getMetrics();
   const int w = renderer.getScreenWidth();
+  const int pageH = renderer.getScreenHeight();
   const int pad = metrics.contentSidePadding;
   const int line10 = renderer.getLineHeight(UI_10_FONT_ID);
+  const int lineS = renderer.getLineHeight(SMALL_FONT_ID);
 
   renderer.clearScreen();
 
-  // Native header with a triage counter subtitle ("2 / 3") when several await.
+  // Branded header with a triage counter subtitle ("2 / 3") when several await.
   char sub[24] = {0};
   if (total > 1) snprintf(sub, sizeof(sub), "%d / %d", idx + 1, total);
-  GUI.drawHeader(renderer, Rect{0, metrics.topPadding, w, metrics.headerHeight}, "Decision", total > 1 ? sub : nullptr);
+  drawBrandedHeader("Decision", total > 1 ? sub : nullptr);
   int y = metrics.topPadding + metrics.headerHeight + metrics.verticalSpacing;
 
-  // agent · project
+  // agent glyph + agent · project
+  const uint8_t* g = glyphForAgent(it.agentType);
+  int textX = pad;
+  if (g) {
+    renderer.drawIcon(g, pad, y, kGlyphPx, kGlyphPx);
+    textX = pad + kGlyphPx + 12;
+  }
   char who[80];
   snprintf(who, sizeof(who), "%s%s%s", it.agentType[0] ? it.agentType : "agent", it.project[0] ? " \xC2\xB7 " : "",
            it.project);
-  renderer.drawText(SMALL_FONT_ID, pad, y, renderer.truncatedText(SMALL_FONT_ID, who, w - pad * 2).c_str(), true);
-  y += line10 + 8;
+  renderer.drawText(UI_10_FONT_ID, textX, y + (kGlyphPx - line10) / 2,
+                    renderer.truncatedText(UI_10_FONT_ID, who, w - textX - pad, EpdFontFamily::BOLD).c_str(), true,
+                    EpdFontFamily::BOLD);
+  y += (g ? kGlyphPx : line10) + 12;
 
   // Question (wrapped)
   if (it.question[0]) {
@@ -416,9 +597,12 @@ void AgentDashboardActivity::renderCard(const AwaitingItem& it, int idx, int tot
     renderer.drawText(UI_10_FONT_ID, pad, y, "Approve this action?", true, EpdFontFamily::BOLD);
   }
 
-  // Physically-aligned hints: labels are drawn at the actual button positions.
-  // Up/Down navigate options (in an option prompt) or sessions (triage); they are
-  // only shown when they do something.
+  // Discoverability: tell the user how to leave the card without deciding.
+  renderer.drawText(SMALL_FONT_ID, pad, pageH - metrics.buttonHintsHeight - lineS - 6, "Hold Back: back to overview",
+                    true);
+
+  // Physically-aligned hints at the actual button positions. Up/Down navigate
+  // options (option prompt) or awaiting sessions (triage); shown only when useful.
   const bool hasNav = optMode || total > 1;
   const auto labels =
       mappedInput.mapLabels("Deny", optMode ? "Select" : "Approve", hasNav ? "Prev" : "", hasNav ? "Next" : "");
@@ -427,110 +611,247 @@ void AgentDashboardActivity::renderCard(const AwaitingItem& it, int idx, int tot
   renderer.displayBuffer();
 }
 
-void AgentDashboardActivity::render(RenderLock&&) {
-  // A pending decision takes over the whole screen (M3 Decision Card / triage).
-  if (dashState == DashState::Connected) {
-    AwaitingItem items[kAwaitingCap];
-    int n = collectAwaiting(items, kAwaitingCap);
-    if (n > 0) {
-      if (triageIndex >= n) triageIndex = n - 1;
-      if (triageIndex < 0) triageIndex = 0;
-      renderCard(items[triageIndex], triageIndex, n);
-      return;
+void AgentDashboardActivity::renderOverview(const OverviewRow* rows, int n, int awaitingCount) {
+  const auto& m = UITheme::getInstance().getMetrics();
+  const int w = renderer.getScreenWidth();
+  const int pageH = renderer.getScreenHeight();
+  const int pad = m.contentSidePadding;
+  const int line10 = renderer.getLineHeight(UI_10_FONT_ID);
+  const int lineS = renderer.getLineHeight(SMALL_FONT_ID);
+
+  bool dataReceived;
+  AgentDeck::lockState();
+  dataReceived = AgentDeck::g_state.dataReceived;
+  AgentDeck::unlockState();
+
+  renderer.clearScreen();
+  drawBrandedHeader("AgentDeck", nullptr);
+  int y = m.topPadding + m.headerHeight + m.verticalSpacing;
+
+  // Connection line
+  char cl[80];
+  snprintf(cl, sizeof(cl), "Connected \xC2\xB7 %s", AgentDeck::Net::wsBridgeIp());
+  renderer.drawText(SMALL_FONT_ID, pad, y, cl, true);
+  y += lineS + 8;
+
+  // Awaiting banner (inverted) — the highest-priority glance signal.
+  if (awaitingCount > 0) {
+    const int bh = line10 + 12;
+    renderer.fillRect(pad, y, w - pad * 2, bh, true);
+    char b[48];
+    snprintf(b, sizeof(b), "%d agent%s need you", awaitingCount, awaitingCount > 1 ? "s" : "");
+    renderer.drawText(UI_10_FONT_ID, pad + 12, y + 6, b, false, EpdFontFamily::BOLD);
+    y += bh + 10;
+  }
+
+  // Footer first so we know the content ceiling.
+  const int footTop = drawLimitsFooter();
+  const int rowsBottom = (footTop < pageH ? footTop : pageH - m.buttonHintsHeight) - 8;
+
+  if (n == 0) {
+    renderer.drawText(UI_10_FONT_ID, pad, y, dataReceived ? "No active sessions" : "Waiting for agent state\xE2\x80\xA6",
+                      true);
+  } else {
+    const int rowH = kGlyphPx + 12;
+    int i = 0;
+    for (; i < n; i++) {
+      if (y + rowH > rowsBottom) break;  // overflow → "+N more" below
+      const bool sel = (i == overviewCursor);
+      if (sel) renderer.drawRect(pad - 6, y - 3, w - pad * 2 + 12, rowH);
+
+      const uint8_t* g = glyphForAgent(rows[i].agentType);
+      if (g) renderer.drawIcon(g, pad, y + (rowH - kGlyphPx) / 2, kGlyphPx, kGlyphPx);
+      const int tx = pad + kGlyphPx + 12;
+      const int ty = y + (rowH - line10) / 2;
+
+      // Status badge (right-aligned). Awaiting is inverted so it pops.
+      const char* badge = stateBadge(rows[i].state);
+      const bool aw = rows[i].awaiting;
+      const int bTextW = renderer.getTextWidth(SMALL_FONT_ID, badge, EpdFontFamily::BOLD);
+      const int bw = bTextW + (aw ? 14 : 0);
+      const int bx = w - pad - bw;
+      if (aw) {
+        const int bh = lineS + 6;
+        renderer.fillRect(bx, ty - 2, bw, bh, true);
+        renderer.drawText(SMALL_FONT_ID, bx + 7, ty + 1, badge, false, EpdFontFamily::BOLD);
+      } else {
+        renderer.drawText(SMALL_FONT_ID, bx, ty + 1, badge, true, EpdFontFamily::REGULAR);
+      }
+
+      // Project name (bold when selected), truncated to leave room for the badge.
+      const auto style = sel ? EpdFontFamily::BOLD : EpdFontFamily::REGULAR;
+      std::string p = renderer.truncatedText(UI_10_FONT_ID, rows[i].project, bx - tx - 12, style);
+      renderer.drawText(UI_10_FONT_ID, tx, ty, p.c_str(), true, style);
+      y += rowH + 6;
+    }
+    if (i < n) {
+      char more[24];
+      snprintf(more, sizeof(more), "+%d more\xE2\x80\xA6", n - i);
+      renderer.drawText(SMALL_FONT_ID, pad, y, more, true);
     }
   }
 
+  // Hint bar. Up/Down only meaningful with more than one row.
+  const auto labels =
+      mappedInput.mapLabels("Exit", n > 0 ? "Open" : "", n > 1 ? "Up" : "", n > 1 ? "Down" : "");
+  GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
+  renderer.displayBuffer();
+}
+
+void AgentDashboardActivity::renderDetail() {
+  const auto& m = UITheme::getInstance().getMetrics();
+  const int w = renderer.getScreenWidth();
+  const int pad = m.contentSidePadding;
+  const int line10 = renderer.getLineHeight(UI_10_FONT_ID);
+  const int lineS = renderer.getLineHeight(SMALL_FONT_ID);
+
+  // Snapshot the selected session under the lock.
+  char project[40] = {0}, agentType[16] = {0}, model[32] = {0}, state[20] = {0}, tool[40] = {0}, question[200] = {0};
+  uint32_t elapsed = 0;
+  bool found = false;
+  AgentDeck::lockState();
+  const auto& s = AgentDeck::g_state;
+  for (uint8_t i = 0; i < s.sessionCount; i++) {
+    if (selectedSid[0] && strcmp(s.sessions[i].id, selectedSid) == 0) {
+      const auto& se = s.sessions[i];
+      strncpy(project, se.projectName, sizeof(project) - 1);
+      strncpy(agentType, se.agentType, sizeof(agentType) - 1);
+      strncpy(model, se.modelName, sizeof(model) - 1);
+      strncpy(state, se.state, sizeof(state) - 1);
+      strncpy(tool, se.currentTool, sizeof(tool) - 1);
+      strncpy(question, se.question, sizeof(question) - 1);
+      elapsed = se.elapsedSec;
+      found = true;
+      break;
+    }
+  }
+  if (!found) {  // observed/single-session fallback → render the focused state
+    strncpy(project, s.projectName, sizeof(project) - 1);
+    strncpy(agentType, s.agentType, sizeof(agentType) - 1);
+    strncpy(model, s.modelName, sizeof(model) - 1);
+    strncpy(tool, s.currentTool, sizeof(tool) - 1);
+    strncpy(question, s.question, sizeof(question) - 1);
+    strncpy(state, agentStateLabel(s.state), sizeof(state) - 1);
+    found = s.dataReceived;
+  }
+  AgentDeck::unlockState();
+
+  renderer.clearScreen();
+  drawBrandedHeader("Session", nullptr);
+  int y = m.topPadding + m.headerHeight + m.verticalSpacing;
+
+  if (!found) {
+    renderer.drawText(UI_10_FONT_ID, pad, y, "Session ended", true, EpdFontFamily::BOLD);
+  } else {
+    const uint8_t* g = glyphForAgent(agentType);
+    int textX = pad;
+    if (g) {
+      renderer.drawIcon(g, pad, y, kGlyphPx, kGlyphPx);
+      textX = pad + kGlyphPx + 12;
+    }
+    renderer.drawText(UI_10_FONT_ID, textX, y + (kGlyphPx - line10) / 2,
+                      renderer.truncatedText(UI_10_FONT_ID, project[0] ? project : "session", w - textX - pad,
+                                             EpdFontFamily::BOLD)
+                          .c_str(),
+                      true, EpdFontFamily::BOLD);
+    y += (g ? kGlyphPx : line10) + 14;
+
+    auto field = [&](const char* label, const char* value) {
+      if (!value || !value[0]) return;
+      char ln[128];
+      snprintf(ln, sizeof(ln), "%s: %s", label, value);
+      renderer.drawText(SMALL_FONT_ID, pad, y, renderer.truncatedText(SMALL_FONT_ID, ln, w - pad * 2).c_str(), true);
+      y += lineS + 6;
+    };
+    field("Agent", agentType);
+    field("Model", model);
+    field("State", state);
+    field("Tool", tool);
+    if (elapsed > 0) {
+      char e[32];
+      if (elapsed >= 60)
+        snprintf(e, sizeof(e), "%um %us", (unsigned)(elapsed / 60), (unsigned)(elapsed % 60));
+      else
+        snprintf(e, sizeof(e), "%us", (unsigned)elapsed);
+      field("Elapsed", e);
+    }
+    if (question[0]) {
+      y += 6;
+      auto lines = renderer.wrappedText(SMALL_FONT_ID, question, w - pad * 2, 4);
+      for (const auto& l : lines) {
+        renderer.drawText(SMALL_FONT_ID, pad, y, l.c_str(), true);
+        y += lineS;
+      }
+    }
+  }
+
+  const auto labels = mappedInput.mapLabels("Back", "", "", "");
+  GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
+  renderer.displayBuffer();
+}
+
+void AgentDashboardActivity::render(RenderLock&&) {
+  // ── Connected: Overview (home) / Card / Detail ──
+  if (dashState == DashState::Connected) {
+    if (viewMode == ViewMode::Card) {
+      AwaitingItem items[kAwaitingCap];
+      const int n = collectAwaiting(items, kAwaitingCap);
+      for (int i = 0; i < n; i++) {
+        if (selectedSid[0] && strcmp(items[i].sid, selectedSid) == 0) {
+          renderCard(items[i], i, n);
+          return;
+        }
+      }
+      // Selected awaiting item gone — fall through to Overview (handleButtons
+      // resets viewMode on the next loop; don't mutate it from the render task).
+    } else if (viewMode == ViewMode::Detail) {
+      renderDetail();
+      return;
+    }
+
+    OverviewRow rows[AgentDeckCfg::SESSIONS_CAP];
+    const int n = collectOverview(rows, AgentDeckCfg::SESSIONS_CAP);
+    int awaiting = 0;
+    for (int i = 0; i < n; i++)
+      if (rows[i].awaiting) awaiting++;
+    renderOverview(rows, n, awaiting);
+    return;
+  }
+
+  // ── Pre-Connected: WiFi select / discovering / connecting. Always show Back. ──
   const auto& metrics = UITheme::getInstance().getMetrics();
   const int w = renderer.getScreenWidth();
   const int line10 = renderer.getLineHeight(UI_10_FONT_ID);
   const int pad = metrics.contentSidePadding;
 
   renderer.clearScreen();
-  GUI.drawHeader(renderer, Rect{0, metrics.topPadding, w, metrics.headerHeight}, "Agent Dashboard");
+  drawBrandedHeader("AgentDeck", nullptr);
   int y = metrics.topPadding + metrics.headerHeight + metrics.verticalSpacing;
-
-  // Snapshot the bits we render under the lock so we don't tear mid-paint.
-  AgentState agentState = AgentState::DISCONNECTED;
-  bool dataReceived = false;
-  char project[40] = {0};
-  char question[200] = {0};
-  char currentTool[40] = {0};
-  uint8_t sessionCount = 0;
-  AgentDeck::lockState();
-  agentState = AgentDeck::g_state.state;
-  dataReceived = AgentDeck::g_state.dataReceived;
-  strncpy(project, AgentDeck::g_state.projectName, sizeof(project) - 1);
-  strncpy(question, AgentDeck::g_state.question, sizeof(question) - 1);
-  strncpy(currentTool, AgentDeck::g_state.currentTool, sizeof(currentTool) - 1);
-  sessionCount = AgentDeck::g_state.sessionCount;
-  AgentDeck::unlockState();
 
   switch (dashState) {
     case DashState::WifiSelection:
-      renderer.drawText(UI_10_FONT_ID, pad, y, "Selecting Wi-Fi\xE2\x80\xA6", true);
+      renderer.drawText(UI_10_FONT_ID, pad, y, "Selecting Wi-Fi\xE2\x80\xA6", true, EpdFontFamily::BOLD);
       break;
 
     case DashState::Discovering:
-      renderer.drawText(UI_10_FONT_ID, pad, y, "Discovering daemon\xE2\x80\xA6", true);
+      renderer.drawText(UI_10_FONT_ID, pad, y, "Discovering daemon\xE2\x80\xA6", true, EpdFontFamily::BOLD);
       y += line10 + 6;
       renderer.drawText(SMALL_FONT_ID, pad, y, ("Wi-Fi: " + localIp).c_str(), true);
       break;
 
     case DashState::Connecting: {
       char l[64];
-      snprintf(l, sizeof(l), "Connecting\xE2\x80\xA6 %s:%u",
-               AgentDeck::Net::wsBridgeIp(), (unsigned)AgentDeck::Net::wsBridgePort());
-      renderer.drawText(UI_10_FONT_ID, pad, y, l, true);
+      snprintf(l, sizeof(l), "Connecting\xE2\x80\xA6 %s:%u", AgentDeck::Net::wsBridgeIp(),
+               (unsigned)AgentDeck::Net::wsBridgePort());
+      renderer.drawText(UI_10_FONT_ID, pad, y, l, true, EpdFontFamily::BOLD);
       break;
     }
 
-    case DashState::Connected: {
-      char l[80];
-      snprintf(l, sizeof(l), "Connected: %s", AgentDeck::Net::wsBridgeIp());
-      renderer.drawText(UI_10_FONT_ID, pad, y, l, true);
-      y += line10 + 10;
-
-      if (!dataReceived) {
-        renderer.drawText(SMALL_FONT_ID, pad, y, "Waiting for state\xE2\x80\xA6", true);
-      } else {
-        // Agent state line
-        char st[96];
-        snprintf(st, sizeof(st), "State: %s", agentStateLabel(agentState));
-        renderer.drawText(UI_10_FONT_ID, pad, y, st, true, EpdFontFamily::BOLD);
-        y += line10 + 6;
-
-        if (project[0]) {
-          std::string p = renderer.truncatedText(SMALL_FONT_ID, (std::string("Project: ") + project).c_str(),
-                                                  w - pad * 2);
-          renderer.drawText(SMALL_FONT_ID, pad, y, p.c_str(), true);
-          y += line10 + 4;
-        }
-        if (sessionCount > 0) {
-          char sc[48];
-          snprintf(sc, sizeof(sc), "Sessions: %u", (unsigned)sessionCount);
-          renderer.drawText(SMALL_FONT_ID, pad, y, sc, true);
-          y += line10 + 4;
-        }
-        if (currentTool[0]) {
-          std::string t = renderer.truncatedText(SMALL_FONT_ID, (std::string("Tool: ") + currentTool).c_str(),
-                                                  w - pad * 2);
-          renderer.drawText(SMALL_FONT_ID, pad, y, t.c_str(), true);
-          y += line10 + 4;
-        }
-        if (question[0]) {
-          y += 4;
-          auto lines = renderer.wrappedText(SMALL_FONT_ID, question, w - pad * 2, 3);
-          for (const auto& ln : lines) {
-            renderer.drawText(SMALL_FONT_ID, pad, y, ln.c_str(), true);
-            y += line10;
-          }
-        }
-      }
-      break;
-    }
+    case DashState::Connected:
+      break;  // handled above
   }
 
-  // Native, physically-aligned hint bar. Only Back (=Exit) is actionable here.
+  // Persistent, physically-aligned hint bar — Back always leaves the dashboard.
   const auto labels = mappedInput.mapLabels("Exit", "", "", "");
   GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
   renderer.displayBuffer();

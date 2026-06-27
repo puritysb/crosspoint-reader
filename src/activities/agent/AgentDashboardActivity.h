@@ -54,6 +54,21 @@ class AgentDashboardActivity final : public Activity {
     uint8_t optionCount;  // meaningful only when isFocused
   };
 
+  // Compact per-session row for the Overview / Mission Control list. Deliberately
+  // lighter than AwaitingItem (no question/tool/options) — an array of these lives
+  // on a no-PSRAM C3 task stack, so keep it small.
+  struct OverviewRow {
+    char sid[64];
+    char project[40];
+    char agentType[16];
+    char state[20];
+    bool awaiting;
+  };
+
+  // Which screen the Connected dashboard is showing. Overview is home; OK opens a
+  // session's Decision Card (awaiting) or read-only Detail (everything else).
+  enum class ViewMode : uint8_t { Overview, Card, Detail };
+
   void onWifiSelectionComplete(bool connected);
   void startNetworking();
   void sendClientRegister();
@@ -62,9 +77,19 @@ class AgentDashboardActivity final : public Activity {
   // Fill out[] with the currently-awaiting sessions; returns the count. Const +
   // takes the state lock internally.
   int collectAwaiting(AwaitingItem* out, int cap) const;
+  // Fill out[] with all alive sessions (overview order); returns the count.
+  int collectOverview(OverviewRow* out, int cap) const;
   void handleButtons();
   void applyDecision(const AwaitingItem& it, bool approve, int optionIndex);
   void renderCard(const AwaitingItem& it, int idx, int total);
+  void renderOverview(const OverviewRow* rows, int n, int awaitingCount);
+  void renderDetail();
+  // Branded header (AgentDeck mark + title) shared by every Connected screen.
+  void drawBrandedHeader(const char* title, const char* subtitle) const;
+  // LIMITS footer — 5H/7D quota gauges. Renders only when the hub supplies usage
+  // (fiveHourPercent/sevenDayPercent >= 0); hidden otherwise. Returns the y it
+  // started at (so callers know the content ceiling) or pageHeight if nothing drawn.
+  int drawLimitsFooter() const;
 
   // The daemon port is dynamic (9120, falling back up to 9139), so a cached
   // ip:port goes stale across a daemon restart. If a connect attempt doesn't
@@ -87,9 +112,14 @@ class AgentDashboardActivity final : public Activity {
   uint32_t connectStartMs = 0;
   uint32_t lastConnectedMs = 0;  // when we last reached Connected (for healthy-vs-flaky drop)
 
+  // Screen navigation
+  ViewMode viewMode = ViewMode::Overview;
+  int overviewCursor = 0;     // selected row in the Overview list
+  char selectedSid[64] = {0}; // session opened into Card/Detail (re-resolved each frame)
+
   // Decision-card / triage cursors
   int triageIndex = 0;       // which awaiting session is shown
   int optionCursor = 0;      // which option is highlighted (option prompts)
-  uint32_t backPressMs = 0;  // Back press timestamp for short(deny)/long(exit)
+  uint32_t backPressMs = 0;  // Back press timestamp for short(deny)/long(exit/back)
   uint32_t lastDecisionMs = 0;
 };

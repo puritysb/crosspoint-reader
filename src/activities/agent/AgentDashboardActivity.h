@@ -119,6 +119,13 @@ class AgentDashboardActivity final : public Activity {
   int overviewTop = 0;        // first visible row (scroll window)
   int detailScroll = 0;       // first visible timeline line in Detail
   char selectedSid[64] = {0}; // session opened into Card/Detail (re-resolved each frame)
+  // Installed SD CJK font id (the reader's font when it's an SD font) so CJK text
+  // renders instead of □; 0 when none — Latin-only built-in UI fonts have no CJK.
+  int cjkFontId = 0;
+
+  // Returns the SD CJK font id for text containing CJK (loading its glyphs), else
+  // the given UI font id. Use the return value for both measuring and drawing.
+  int fontForText(int uiFontId, const char* text) const;
 
   // Decision-card / triage cursors
   int triageIndex = 0;       // which awaiting session is shown

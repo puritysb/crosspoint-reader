@@ -9,6 +9,7 @@
 #include <string>
 #include <vector>
 
+#include "CrossPointSettings.h"
 #include "SilentRestart.h"
 #include "activities/network/WifiSelectionActivity.h"
 #include "agent/AgentLog.h"
@@ -76,6 +77,32 @@ std::string formatResetRemaining(const char* iso) {
   return buf;
 }
 
+// True when the text contains Hangul / CJK / Kana codepoints — i.e. glyphs the
+// Latin-only built-in UI fonts can't render (they'd show □). Used to swap to an
+// installed SD CJK font for that line.
+bool hasCJK(const char* s) {
+  if (!s) return false;
+  const unsigned char* p = reinterpret_cast<const unsigned char*>(s);
+  while (*p) {
+    const unsigned char c = *p;
+    if (c < 0x80) { p++; continue; }
+    uint32_t cp = 0;
+    int n = 0;
+    if ((c & 0xE0) == 0xC0) { cp = c & 0x1F; n = 1; }
+    else if ((c & 0xF0) == 0xE0) { cp = c & 0x0F; n = 2; }
+    else if ((c & 0xF8) == 0xF0) { cp = c & 0x07; n = 3; }
+    else { p++; continue; }
+    p++;
+    for (int i = 0; i < n && *p; i++, p++) cp = (cp << 6) | (*p & 0x3F);
+    if ((cp >= 0xAC00 && cp <= 0xD7A3) ||  // Hangul syllables
+        (cp >= 0x1100 && cp <= 0x11FF) ||  // Hangul Jamo
+        (cp >= 0x3040 && cp <= 0x30FF) ||  // Hiragana + Katakana
+        (cp >= 0x4E00 && cp <= 0x9FFF))    // CJK unified ideographs
+      return true;
+  }
+  return false;
+}
+
 // Compact, uppercase status badge for the overview rows.
 const char* stateBadge(const char* s) {
   if (!s || !s[0]) return "—";
@@ -124,6 +151,11 @@ void AgentDashboardActivity::onEnter() {
   AgentDeck::g_state.reset();
   AgentDeck::unlockState();
   AgentDeck::Net::wsInit();
+
+  // Resolve an installed SD CJK font so Korean/CJK text renders instead of □.
+  // getReaderFontId() returns the SD font id only when the user picked an SD font
+  // (sdFontFamilyName set) — that font carries CJK glyphs when it's a CJK family.
+  cjkFontId = (SETTINGS.sdFontFamilyName[0] != '\0') ? SETTINGS.getReaderFontId() : 0;
 
   AgentLog::line("AGENT", "AgentDashboardActivity onEnter (M2 network)");
   requestUpdate();
@@ -547,6 +579,14 @@ void AgentDashboardActivity::applyDecision(const AwaitingItem& it, bool approve,
   requestUpdate();
 }
 
+int AgentDashboardActivity::fontForText(int uiFontId, const char* text) const {
+  if (cjkFontId != 0 && hasCJK(text)) {
+    renderer.ensureSdCardFontReady(cjkFontId, text, 0x0F);
+    return cjkFontId;
+  }
+  return uiFontId;
+}
+
 void AgentDashboardActivity::drawBrandedHeader(const char* title, const char* subtitle) const {
   const auto& m = UITheme::getInstance().getMetrics();
   const int w = renderer.getScreenWidth();
@@ -709,10 +749,12 @@ void AgentDashboardActivity::renderCard(const AwaitingItem& it, int idx, int tot
 
   // Question (wrapped)
   if (it.question[0]) {
-    auto lines = renderer.wrappedText(UI_10_FONT_ID, it.question, w - pad * 2, 5);
+    const int qf = fontForText(UI_10_FONT_ID, it.question);  // CJK questions → SD CJK font
+    const int qh = renderer.getLineHeight(qf);
+    auto lines = renderer.wrappedText(qf, it.question, w - pad * 2, 5);
     for (const auto& ln : lines) {
-      renderer.drawText(UI_10_FONT_ID, pad, y, ln.c_str(), true);
-      y += line10;
+      renderer.drawText(qf, pad, y, ln.c_str(), true);
+      y += qh;
     }
     y += 8;
   }
@@ -845,14 +887,17 @@ void AgentDashboardActivity::renderOverview(const OverviewRow* rows, int n, int 
       }
 
       // Project name (bold when selected), truncated to leave room for the badge.
+      // Swap to the SD CJK font for non-Latin names so they don't render as □.
       const auto style = sel ? EpdFontFamily::BOLD : EpdFontFamily::REGULAR;
-      std::string p = renderer.truncatedText(UI_10_FONT_ID, rows[i].project, bx - tx - 12, style);
-      renderer.drawText(UI_10_FONT_ID, tx, ty1, p.c_str(), true, style);
+      const int pf = fontForText(UI_10_FONT_ID, rows[i].project);
+      std::string p = renderer.truncatedText(pf, rows[i].project, bx - tx - 12, style);
+      renderer.drawText(pf, tx, ty1, p.c_str(), true, style);
 
       // Activity one-liner under the project (compact).
       if (hasAct) {
-        std::string a = renderer.truncatedText(SMALL_FONT_ID, rows[i].activity, w - tx - pad);
-        renderer.drawText(SMALL_FONT_ID, tx, ty1 + line10, a.c_str(), true);
+        const int af = fontForText(SMALL_FONT_ID, rows[i].activity);
+        std::string a = renderer.truncatedText(af, rows[i].activity, w - tx - pad);
+        renderer.drawText(af, tx, ty1 + line10, a.c_str(), true);
       }
       y += rowStride;
     }
@@ -975,12 +1020,17 @@ void AgentDashboardActivity::renderDetail() {
     renderer.drawText(SMALL_FONT_ID, pad, y, "No recent activity yet\xE2\x80\xA6", true);
   } else {
     // Flatten matching entries to wrapped lines, newest first, so the latest
-    // activity is at the top and Up/Down scrolls back through history.
+    // activity is at the top and Up/Down scrolls back through history. Each line
+    // carries the font it was wrapped with — CJK lines use the SD CJK font.
     std::vector<std::string> lines;
+    std::vector<int> lineFonts;
     for (int k = tlCount - 1; k >= 0; k--) {
-      auto wrapped = renderer.wrappedText(SMALL_FONT_ID, tlText[k], w - pad * 2 - 10, 3);
-      for (size_t li = 0; li < wrapped.size(); li++)
+      const int fid = fontForText(SMALL_FONT_ID, tlText[k]);
+      auto wrapped = renderer.wrappedText(fid, tlText[k], w - pad * 2 - 10, 3);
+      for (size_t li = 0; li < wrapped.size(); li++) {
         lines.push_back((li == 0 ? "\xE2\x80\xA2 " : "  ") + wrapped[li]);  // bullet first line
+        lineFonts.push_back(fid);
+      }
     }
     const int visibleLines = (listBottom - listTop) / lineS;
     int maxScroll = (int)lines.size() - visibleLines;
@@ -988,9 +1038,11 @@ void AgentDashboardActivity::renderDetail() {
     if (detailScroll > maxScroll) detailScroll = maxScroll;
     if (detailScroll < 0) detailScroll = 0;
     int ly = listTop;
-    for (int i = detailScroll; i < (int)lines.size() && ly + lineS <= listBottom; i++) {
-      renderer.drawText(SMALL_FONT_ID, pad, ly, lines[i].c_str(), true);
-      ly += lineS;
+    for (int i = detailScroll; i < (int)lines.size(); i++) {
+      const int lh = renderer.getLineHeight(lineFonts[i]);  // CJK font is taller
+      if (ly + lh > listBottom) break;
+      renderer.drawText(lineFonts[i], pad, ly, lines[i].c_str(), true);
+      ly += lh;
     }
   }
 

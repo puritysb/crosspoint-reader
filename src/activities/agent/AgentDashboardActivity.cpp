@@ -570,7 +570,7 @@ void AgentDashboardActivity::drawBrandedHeader(const char* title, const char* su
 
 int AgentDashboardActivity::drawLimitsFooter() const {
   // Snapshot usage + the best-effort subscription summary under the lock.
-  float five, seven, cxFive, cxSeven, agCredits;
+  float five, seven, cxFive, cxSeven;
   bool stale;
   char fiveReset[32], sevenReset[32], cxFiveReset[32], cxSevenReset[32];
   char codexPlan[16], codexUntil[32], agPlan[24];
@@ -581,7 +581,6 @@ int AgentDashboardActivity::drawLimitsFooter() const {
   cxFive = s.codexFivePercent;
   cxSeven = s.codexSevenPercent;
   stale = s.usageStale;
-  agCredits = s.antigravityCredits;
   auto cp = [](char* d, size_t n, const char* src) {
     strncpy(d, src, n - 1);
     d[n - 1] = '\0';
@@ -608,12 +607,12 @@ int AgentDashboardActivity::drawLimitsFooter() const {
       off += snprintf(subLine + off, sizeof(subLine) - off, " - %s", d);
     }
   }
-  if (agCredits >= 0 || agPlan[0]) {
+  // Antigravity's real group limits (5h / weekly %) live only in the app's memory
+  // from Google's backend — they never hit local disk, and the local credit
+  // aggregate is unrelated to them. So surface only the plan name, never a number.
+  if (agPlan[0]) {
     if (off > 0) off += snprintf(subLine + off, sizeof(subLine) - off, "   \xC2\xB7   ");
-    if (agCredits >= 0)
-      off += snprintf(subLine + off, sizeof(subLine) - off, "AGY %d cr", (int)(agCredits + 0.5f));
-    else
-      off += snprintf(subLine + off, sizeof(subLine) - off, "AGY %s", agPlan);
+    off += snprintf(subLine + off, sizeof(subLine) - off, "AGY %s", agPlan);
   }
 
   const int pageH = renderer.getScreenHeight();

@@ -25,7 +25,10 @@
 #include "components/UITheme.h"  // GUI (theme) + ThemeMetrics + Rect
 #include "components/icons/agentdeck_mark.h"
 #include "components/icons/glyph_antigravity.h"
+#include "components/icons/glyph_antigravity_16.h"
 #include "components/icons/glyph_claude.h"
+#include "components/icons/glyph_claude_16.h"
+#include "components/icons/glyph_codex_16.h"
 #include "components/icons/glyph_codex.h"
 #include "components/icons/glyph_openclaw.h"
 #include "components/icons/glyph_opencode.h"
@@ -106,6 +109,17 @@ bool hasCJK(const char* s) {
       return true;
   }
   return false;
+}
+
+// Strip an "observed:<agent>:" prefix → the raw session UUID. The sessions_list
+// id for passively-observed sessions is prefixed ("observed:claude:<uuid>") while
+// timeline entries are keyed by the raw UUID, so Detail must compare the raw form.
+const char* rawSid(const char* sid) {
+  if (sid && strncmp(sid, "observed:", 9) == 0) {
+    const char* p = strchr(sid + 9, ':');
+    if (p) return p + 1;
+  }
+  return sid ? sid : "";
 }
 
 // Compact, uppercase status badge for the overview rows.
@@ -653,31 +667,14 @@ int AgentDashboardActivity::drawLimitsFooter() const {
   cp(agPlan, sizeof(agPlan), s.antigravityPlan);
   AgentDeck::unlockState();
 
-  // Optional other-agent subscription line (ChatGPT plan/expiry, Antigravity
-  // credits). Only what the hub actually sent; missing data is omitted, never faked.
-  char subLine[96] = {0};
-  int off = 0;
-  if (codexPlan[0] || codexUntil[0]) {
-    off += snprintf(subLine + off, sizeof(subLine) - off, "ChatGPT");
-    if (codexPlan[0]) off += snprintf(subLine + off, sizeof(subLine) - off, " %s", codexPlan);
-    if (codexUntil[0]) {
-      char d[11] = {0};
-      strncpy(d, codexUntil, 10);  // YYYY-MM-DD portion of the ISO date
-      off += snprintf(subLine + off, sizeof(subLine) - off, " - %s", d);
-    }
-  }
-  // Antigravity's real group limits (5h / weekly %) live only in the app's memory
-  // from Google's backend — they never hit local disk, and the local credit
-  // aggregate is unrelated to them. So surface only the plan name, never a number.
-  if (agPlan[0]) {
-    if (off > 0) off += snprintf(subLine + off, sizeof(subLine) - off, "   \xC2\xB7   ");
-    off += snprintf(subLine + off, sizeof(subLine) - off, "AGY %s", agPlan);
-  }
-
+  // Subscription line carries ChatGPT plan/expiry + Antigravity plan. Antigravity's
+  // real group limits (5h/weekly %) are backend-only (never on disk) and the local
+  // credit aggregate is unrelated, so only the plan name is shown — never a number.
+  const bool hasChatGpt = (codexPlan[0] || codexUntil[0]);
   const int pageH = renderer.getScreenHeight();
   const bool hasClaude = (five >= 0 || seven >= 0);
   const bool hasCodex = (cxFive >= 0 || cxSeven >= 0);
-  const bool hasSub = subLine[0] != '\0';
+  const bool hasSub = (hasChatGpt || agPlan[0]);
   if (!hasClaude && !hasCodex && !hasSub) return pageH;  // nothing → hide footer
 
   const auto& m = UITheme::getInstance().getMetrics();
@@ -685,18 +682,21 @@ int AgentDashboardActivity::drawLimitsFooter() const {
   const int pad = m.contentSidePadding;
   const int lineS = renderer.getLineHeight(SMALL_FONT_ID);
   const int rowCount = (hasClaude ? 1 : 0) + (hasCodex ? 1 : 0) + (hasSub ? 1 : 0);
-  const int bandH = 14 + rowCount * (lineS + 6);
+  const int rowH = (lineS > 16 ? lineS : 16) + 6;  // hold a 16px solution icon
+  const int bandH = 12 + rowCount * rowH;
   const int top = pageH - m.buttonHintsHeight - bandH;
 
   renderer.drawLine(pad, top, w - pad, top);  // separator above the footer
   int y = top + 12;
-  const int agentLabelW = 56;  // left column holds the agent name ("Claude" / "Codex")
-  const int colW = (w - pad * 2 - agentLabelW - 12) / 2;  // 5H | 7D columns
+  constexpr int iconPx = 16;
+  const int iconColW = iconPx + 8;  // solution icon column (replaces the name label)
+  const int colW = (w - pad * 2 - iconColW - 12) / 2;  // 5H | 7D columns
+  const int iconDY = (lineS - iconPx) / 2;  // align icon to the text line
 
-  // One labelled agent row: "<Agent>  5H[gauge]NN% rem   7D[gauge]NN% rem".
-  auto agentRow = [&](const char* agent, float a, const char* aIso, float b, const char* bIso) {
-    renderer.drawText(SMALL_FONT_ID, pad, y, agent, true, EpdFontFamily::BOLD);
-    const int x0 = pad + agentLabelW;
+  // One agent row: "<icon>  5H[gauge]NN% rem   7D[gauge]NN% rem".
+  auto agentRow = [&](const uint8_t* icon, float a, const char* aIso, float b, const char* bIso) {
+    renderer.drawIcon(icon, pad, y + iconDY, iconPx, iconPx);
+    const int x0 = pad + iconColW;
     auto quota = [&](int x, const char* tag, float pct, const char* iso) {
       if (pct < 0) return;
       std::string rem = formatResetRemaining(iso);
@@ -720,14 +720,35 @@ int AgentDashboardActivity::drawLimitsFooter() const {
     };
     quota(x0, "5H", a, aIso);
     quota(x0 + colW + 12, "7D", b, bIso);
-    y += lineS + 6;
+    y += rowH;
   };
 
-  if (hasClaude) agentRow("Claude", five, fiveReset, seven, sevenReset);
-  if (hasCodex) agentRow("Codex", cxFive, cxFiveReset, cxSeven, cxSevenReset);
+  if (hasClaude) agentRow(GlyphClaude16, five, fiveReset, seven, sevenReset);
+  if (hasCodex) agentRow(GlyphCodex16, cxFive, cxFiveReset, cxSeven, cxSevenReset);
+
+  // Subscription row: [OpenAI icon] ChatGPT plan/date   [Antigravity icon] plan.
   if (hasSub) {
-    renderer.drawText(SMALL_FONT_ID, pad, y,
-                      renderer.truncatedText(SMALL_FONT_ID, subLine, w - pad * 2).c_str(), true);
+    int sx = pad;
+    if (hasChatGpt) {
+      renderer.drawIcon(GlyphCodex16, sx, y + iconDY, iconPx, iconPx);
+      sx += iconColW;
+      char t[48] = {0};
+      int o = 0;
+      if (codexPlan[0]) o += snprintf(t + o, sizeof(t) - o, "%s", codexPlan);
+      if (codexUntil[0]) {
+        char d[11] = {0};
+        strncpy(d, codexUntil, 10);
+        o += snprintf(t + o, sizeof(t) - o, "%s%s", codexPlan[0] ? " - " : "", d);
+      }
+      renderer.drawText(SMALL_FONT_ID, sx, y, t, true);
+      sx += renderer.getTextWidth(SMALL_FONT_ID, t) + 16;
+    }
+    if (agPlan[0]) {
+      renderer.drawIcon(GlyphAntigravity16, sx, y + iconDY, iconPx, iconPx);
+      sx += iconColW;
+      renderer.drawText(SMALL_FONT_ID, sx, y,
+                        renderer.truncatedText(SMALL_FONT_ID, agPlan, w - pad - sx).c_str(), true);
+    }
   }
   return top;
 }
@@ -889,7 +910,7 @@ void AgentDashboardActivity::renderDetail() {
     int idx = (s.timelineCount < AgentDeck::DashboardState::TIMELINE_CAP) ? k
                                                                : (s.timelineHead + k) % AgentDeck::DashboardState::TIMELINE_CAP;
     const AgentDeck::TimelineItem& t = s.timeline[idx];
-    if (selectedSid[0] && strcmp(t.sid, selectedSid) != 0) continue;
+    if (selectedSid[0] && strcmp(rawSid(t.sid), rawSid(selectedSid)) != 0) continue;
     if (t.text[0] == '\0') continue;
     strncpy(tlText[tlCount], t.text, sizeof(tlText[0]) - 1);
     tlText[tlCount][sizeof(tlText[0]) - 1] = '\0';

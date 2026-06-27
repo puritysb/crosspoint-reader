@@ -142,8 +142,29 @@ void handleUsageUpdate(JsonObject& obj) {
     JsonObject ag = obj["antigravityStatus"].as<JsonObject>();
     if (ag["planName"].is<const char*>())
       copyStr(g_state.antigravityPlan, sizeof(g_state.antigravityPlan), ag["planName"].as<const char*>());
-    if (ag["availableCredits"].is<float>())
+    // availableCredits arrives as an integer credit count.
+    if (ag["availableCredits"].is<int>() || ag["availableCredits"].is<float>())
       g_state.antigravityCredits = ag["availableCredits"].as<float>();
+  }
+
+  // Codex rate-limit windows: primary ≈ 5h, secondary ≈ 7d (usedPercent + resetsAt).
+  g_state.codexFivePercent = -1.0f;
+  g_state.codexSevenPercent = -1.0f;
+  g_state.codexFiveReset[0] = '\0';
+  g_state.codexSevenReset[0] = '\0';
+  if (obj["codexRateLimits"].is<JsonObject>()) {
+    JsonObject cx = obj["codexRateLimits"].as<JsonObject>();
+    auto window = [&](const char* key, float& pct, char* reset, size_t cap) {
+      if (!cx[key].is<JsonObject>()) return;
+      JsonObject wnd = cx[key].as<JsonObject>();
+      if (wnd["usedPercent"].is<int>() || wnd["usedPercent"].is<float>()) pct = wnd["usedPercent"].as<float>();
+      if (wnd["resetsAt"].is<const char*>()) copyStr(reset, cap, wnd["resetsAt"].as<const char*>());
+    };
+    window("primary", g_state.codexFivePercent, g_state.codexFiveReset, sizeof(g_state.codexFiveReset));
+    window("secondary", g_state.codexSevenPercent, g_state.codexSevenReset, sizeof(g_state.codexSevenReset));
+    // If codexPlanType wasn't sent at top-level, the windows object may carry it.
+    if (g_state.codexPlan[0] == '\0' && cx["planType"].is<const char*>())
+      copyStr(g_state.codexPlan, sizeof(g_state.codexPlan), cx["planType"].as<const char*>());
   }
 
   unlockState();
@@ -171,8 +192,33 @@ void handleSessionsList(JsonObject& obj) {
     copyStr(si.question, sizeof(si.question), s["question"] | "");
     copyStr(si.promptType, sizeof(si.promptType), s["promptType"] | "");
     copyStr(si.requestId, sizeof(si.requestId), s["requestId"] | "");
+    // Daemon-synthesized activity one-liner; fall back to currentTool / goal.
+    const char* act = s["activity"] | (s["currentTask"] | (s["goal"] | ""));
+    copyStr(si.activity, sizeof(si.activity), act);
+    if (si.activity[0] == '\0') copyStr(si.activity, sizeof(si.activity), si.currentTool);
   }
 
+  unlockState();
+}
+
+// Live, forward-only timeline ring (per-session Detail view). Appends entry.raw
+// keyed by sessionId; the ring overwrites oldest when full.
+void handleTimelineEvent(JsonObject& obj) {
+  JsonObject e = obj["entry"].as<JsonObject>();
+  if (e.isNull()) return;
+  const char* sid = e["sessionId"] | "";
+  if (sid[0] == '\0') return;  // unattributed → nothing to show in a session detail
+  const char* raw = e["raw"] | "";
+  const char* etype = e["type"] | "";
+  if (raw[0] == '\0' && etype[0] == '\0') return;
+
+  lockState();
+  TimelineItem& it = g_state.timeline[g_state.timelineHead];
+  copyStr(it.sid, sizeof(it.sid), sid);
+  copyStr(it.text, sizeof(it.text), raw);
+  copyStr(it.type, sizeof(it.type), etype);
+  g_state.timelineHead = (g_state.timelineHead + 1) % DashboardState::TIMELINE_CAP;
+  if (g_state.timelineCount < DashboardState::TIMELINE_CAP) g_state.timelineCount++;
   unlockState();
 }
 
@@ -206,6 +252,8 @@ void parseMessage(const char* json, size_t length) {
     handleSessionsList(obj);
   } else if (strcmp(type, "usage_update") == 0) {
     handleUsageUpdate(obj);
+  } else if (strcmp(type, "timeline_event") == 0) {
+    handleTimelineEvent(obj);
   } else if (strcmp(type, "connection") == 0 || strcmp(type, "connected") == 0) {
     // Connection ack — actual connect/disconnect is tracked by the WS event
     // callbacks. Logged for diagnostics.

@@ -65,6 +65,15 @@ struct SessionInfo {
   char question[160];
   char promptType[20];
   char requestId[40];   // gated PreToolUse request id → reply permission_decision (M3)
+  char activity[80];    // daemon-synthesized "what it's doing" one-liner (falls back to currentTool)
+};
+
+// One timeline event for the per-session Detail view. Populated from the daemon's
+// `timeline_event` broadcast (live, forward-only). Bounded ring on a no-PSRAM C3.
+struct TimelineItem {
+  char sid[64];   // entry.sessionId
+  char text[96];  // entry.raw (human line)
+  char type[20];  // entry.type (chat_start / tool_request / …)
 };
 
 // ===== Main dashboard state (trimmed) =====
@@ -116,6 +125,18 @@ struct DashboardState {
   char codexActiveUntil[32];   // ISO date the ChatGPT subscription is active until
   char antigravityPlan[24];    // Antigravity plan name
   float antigravityCredits;    // Antigravity available credits, -1 = no data
+  // Codex rate-limit windows (usage_update.codexRateLimits). primary ≈ 5h,
+  // secondary ≈ 7d. -1 = no data.
+  float codexFivePercent;
+  float codexSevenPercent;
+  char codexFiveReset[32];
+  char codexSevenReset[32];
+
+  // Per-session timeline ring (forward-only, from timeline_event). Detail view.
+  static constexpr int TIMELINE_CAP = 16;
+  TimelineItem timeline[TIMELINE_CAP];
+  uint8_t timelineCount;  // number of valid entries (<= TIMELINE_CAP)
+  uint8_t timelineHead;   // next write index (oldest = head when full)
 
   // Sessions (multi-agent). Cap matches AgentDeckCfg::SESSIONS_CAP.
   SessionInfo sessions[AgentDeckCfg::SESSIONS_CAP];
@@ -134,6 +155,8 @@ struct DashboardState {
     sevenDayPercent = -1.0f;
     estimatedCostUsd = -1.0f;
     antigravityCredits = -1.0f;
+    codexFivePercent = -1.0f;
+    codexSevenPercent = -1.0f;
   }
 
   // Called while g_stateMutex is held. Clears volatile bridge data so every
@@ -164,6 +187,12 @@ struct DashboardState {
     codexActiveUntil[0] = '\0';
     antigravityPlan[0] = '\0';
     antigravityCredits = -1.0f;
+    codexFivePercent = -1.0f;
+    codexSevenPercent = -1.0f;
+    codexFiveReset[0] = '\0';
+    codexSevenReset[0] = '\0';
+    timelineCount = 0;
+    timelineHead = 0;
     usageStale = true;
     dataReceived = false;
   }

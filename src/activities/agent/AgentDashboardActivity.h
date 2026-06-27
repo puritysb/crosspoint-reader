@@ -62,6 +62,7 @@ class AgentDashboardActivity final : public Activity {
     char project[40];
     char agentType[16];
     char state[20];
+    char activity[80];  // compact "what it's doing" line
     bool awaiting;
   };
 
@@ -115,6 +116,8 @@ class AgentDashboardActivity final : public Activity {
   // Screen navigation
   ViewMode viewMode = ViewMode::Overview;
   int overviewCursor = 0;     // selected row in the Overview list
+  int overviewTop = 0;        // first visible row (scroll window)
+  int detailScroll = 0;       // first visible timeline line in Detail
   char selectedSid[64] = {0}; // session opened into Card/Detail (re-resolved each frame)
 
   // Decision-card / triage cursors

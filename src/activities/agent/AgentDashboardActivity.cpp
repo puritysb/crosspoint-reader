@@ -7,6 +7,7 @@
 #include <cstring>
 #include <ctime>
 #include <string>
+#include <vector>
 
 #include "SilentRestart.h"
 #include "activities/network/WifiSelectionActivity.h"
@@ -17,6 +18,7 @@
 #include "agentdeck/ws_client.h"
 #include "components/UITheme.h"  // GUI (theme) + ThemeMetrics + Rect
 #include "components/icons/agentdeck_mark.h"
+#include "components/icons/glyph_antigravity.h"
 #include "components/icons/glyph_claude.h"
 #include "components/icons/glyph_codex.h"
 #include "components/icons/glyph_openclaw.h"
@@ -40,6 +42,7 @@ const uint8_t* glyphForAgent(const char* a) {
   if (strncmp(a, "codex", 5) == 0) return GlyphCodex;  // codex-cli / codex-app / codex
   if (strcmp(a, "opencode") == 0) return GlyphOpenCode;
   if (strcmp(a, "openclaw") == 0) return GlyphOpenClaw;
+  if (strncmp(a, "antigravity", 11) == 0 || strcmp(a, "agy") == 0) return GlyphAntigravity;
   return nullptr;
 }
 
@@ -199,7 +202,12 @@ uint32_t AgentDashboardActivity::computeStateSignature() const {
     h = fnvUpdate(h, s.sessions[i].id, strlen(s.sessions[i].id));
     h = fnvUpdate(h, s.sessions[i].state, strlen(s.sessions[i].state));
     h = fnvUpdate(h, s.sessions[i].requestId, strlen(s.sessions[i].requestId));
+    h = fnvUpdate(h, s.sessions[i].activity, strlen(s.sessions[i].activity));
   }
+  // Codex limits + timeline depth so the footer / Detail repaint on change.
+  h = fnvUpdate(h, &s.codexFivePercent, sizeof(s.codexFivePercent));
+  h = fnvUpdate(h, &s.codexSevenPercent, sizeof(s.codexSevenPercent));
+  h = fnvUpdate(h, &s.timelineHead, sizeof(s.timelineHead));
   // Usage so the LIMITS footer repaints when a quota gauge / reset / subscription moves.
   h = fnvUpdate(h, &s.fiveHourPercent, sizeof(s.fiveHourPercent));
   h = fnvUpdate(h, &s.sevenDayPercent, sizeof(s.sevenDayPercent));
@@ -372,6 +380,7 @@ int AgentDashboardActivity::collectOverview(OverviewRow* out, int cap) const {
     cp(o.project, sizeof(o.project), se.projectName[0] ? se.projectName : "session");
     cp(o.agentType, sizeof(o.agentType), se.agentType);
     cp(o.state, sizeof(o.state), se.state);
+    cp(o.activity, sizeof(o.activity), se.activity);
     o.awaiting = (strncmp(se.state, "awaiting", 8) == 0);
   }
   // Observed/single-session fallback: sessions_list empty but a focused
@@ -385,6 +394,7 @@ int AgentDashboardActivity::collectOverview(OverviewRow* out, int cap) const {
                     s.state == AgentState::AWAITING_DIFF;
     cp(o.state, sizeof(o.state),
        aw ? "awaiting" : (s.state == AgentState::PROCESSING ? "processing" : "idle"));
+    cp(o.activity, sizeof(o.activity), s.currentTool);
     o.awaiting = aw;
   }
   AgentDeck::unlockState();
@@ -467,6 +477,15 @@ void AgentDashboardActivity::handleButtons() {
 
   // ── DETAIL: read-only session inspector ──
   if (viewMode == ViewMode::Detail) {
+    // Up/Down scroll the activity timeline; clamping happens in renderDetail.
+    if (mappedInput.wasReleased(Btn::NavPrevious)) {
+      if (detailScroll > 0) detailScroll--;
+      requestUpdate();
+    }
+    if (mappedInput.wasReleased(Btn::NavNext)) {
+      detailScroll++;
+      requestUpdate();
+    }
     if (mappedInput.wasReleased(Btn::Back)) {
       viewMode = ViewMode::Overview;
       requestUpdate();
@@ -495,6 +514,7 @@ void AgentDashboardActivity::handleButtons() {
     strncpy(selectedSid, sel.sid, sizeof(selectedSid) - 1);
     selectedSid[sizeof(selectedSid) - 1] = '\0';
     optionCursor = 0;
+    detailScroll = 0;
     viewMode = sel.awaiting ? ViewMode::Card : ViewMode::Detail;
     requestUpdate();
   }
@@ -550,29 +570,33 @@ void AgentDashboardActivity::drawBrandedHeader(const char* title, const char* su
 
 int AgentDashboardActivity::drawLimitsFooter() const {
   // Snapshot usage + the best-effort subscription summary under the lock.
-  float five, seven, agCredits;
+  float five, seven, cxFive, cxSeven, agCredits;
   bool stale;
-  char fiveReset[32], sevenReset[32], codexPlan[16], codexUntil[32], agPlan[24];
+  char fiveReset[32], sevenReset[32], cxFiveReset[32], cxSevenReset[32];
+  char codexPlan[16], codexUntil[32], agPlan[24];
   AgentDeck::lockState();
   const auto& s = AgentDeck::g_state;
   five = s.fiveHourPercent;
   seven = s.sevenDayPercent;
+  cxFive = s.codexFivePercent;
+  cxSeven = s.codexSevenPercent;
   stale = s.usageStale;
   agCredits = s.antigravityCredits;
-  strncpy(fiveReset, s.fiveHourReset, sizeof(fiveReset) - 1);
-  fiveReset[sizeof(fiveReset) - 1] = '\0';
-  strncpy(sevenReset, s.sevenDayReset, sizeof(sevenReset) - 1);
-  sevenReset[sizeof(sevenReset) - 1] = '\0';
-  strncpy(codexPlan, s.codexPlan, sizeof(codexPlan) - 1);
-  codexPlan[sizeof(codexPlan) - 1] = '\0';
-  strncpy(codexUntil, s.codexActiveUntil, sizeof(codexUntil) - 1);
-  codexUntil[sizeof(codexUntil) - 1] = '\0';
-  strncpy(agPlan, s.antigravityPlan, sizeof(agPlan) - 1);
-  agPlan[sizeof(agPlan) - 1] = '\0';
+  auto cp = [](char* d, size_t n, const char* src) {
+    strncpy(d, src, n - 1);
+    d[n - 1] = '\0';
+  };
+  cp(fiveReset, sizeof(fiveReset), s.fiveHourReset);
+  cp(sevenReset, sizeof(sevenReset), s.sevenDayReset);
+  cp(cxFiveReset, sizeof(cxFiveReset), s.codexFiveReset);
+  cp(cxSevenReset, sizeof(cxSevenReset), s.codexSevenReset);
+  cp(codexPlan, sizeof(codexPlan), s.codexPlan);
+  cp(codexUntil, sizeof(codexUntil), s.codexActiveUntil);
+  cp(agPlan, sizeof(agPlan), s.antigravityPlan);
   AgentDeck::unlockState();
 
-  // Compose the optional other-agent subscription line (ChatGPT plan/expiry,
-  // Antigravity credits). Empty when the hub sent none of it.
+  // Optional other-agent subscription line (ChatGPT plan/expiry, Antigravity
+  // credits). Only what the hub actually sent; missing data is omitted, never faked.
   char subLine[96] = {0};
   int off = 0;
   if (codexPlan[0] || codexUntil[0]) {
@@ -581,49 +605,53 @@ int AgentDashboardActivity::drawLimitsFooter() const {
     if (codexUntil[0]) {
       char d[11] = {0};
       strncpy(d, codexUntil, 10);  // YYYY-MM-DD portion of the ISO date
-      off += snprintf(subLine + off, sizeof(subLine) - off, " \xE2\x86\x92 %s", d);
+      off += snprintf(subLine + off, sizeof(subLine) - off, " - %s", d);
     }
   }
   if (agCredits >= 0 || agPlan[0]) {
     if (off > 0) off += snprintf(subLine + off, sizeof(subLine) - off, "   \xC2\xB7   ");
     if (agCredits >= 0)
-      off += snprintf(subLine + off, sizeof(subLine) - off, "AG %d cr", (int)(agCredits + 0.5f));
+      off += snprintf(subLine + off, sizeof(subLine) - off, "AGY %d cr", (int)(agCredits + 0.5f));
     else
-      off += snprintf(subLine + off, sizeof(subLine) - off, "AG %s", agPlan);
+      off += snprintf(subLine + off, sizeof(subLine) - off, "AGY %s", agPlan);
   }
 
   const int pageH = renderer.getScreenHeight();
-  const bool hasUsage = (five >= 0 || seven >= 0);
+  const bool hasClaude = (five >= 0 || seven >= 0);
+  const bool hasCodex = (cxFive >= 0 || cxSeven >= 0);
   const bool hasSub = subLine[0] != '\0';
-  if (!hasUsage && !hasSub) return pageH;  // nothing to show → hide the footer
+  if (!hasClaude && !hasCodex && !hasSub) return pageH;  // nothing → hide footer
 
   const auto& m = UITheme::getInstance().getMetrics();
   const int w = renderer.getScreenWidth();
   const int pad = m.contentSidePadding;
   const int lineS = renderer.getLineHeight(SMALL_FONT_ID);
-  const int rowCount = (hasUsage ? 1 : 0) + (hasSub ? 1 : 0);
+  const int rowCount = (hasClaude ? 1 : 0) + (hasCodex ? 1 : 0) + (hasSub ? 1 : 0);
   const int bandH = 14 + rowCount * (lineS + 6);
   const int top = pageH - m.buttonHintsHeight - bandH;
 
   renderer.drawLine(pad, top, w - pad, top);  // separator above the footer
   int y = top + 12;
-  const int colW = (w - pad * 2 - 16) / 2;  // two columns (5H | 7D)
+  const int agentLabelW = 56;  // left column holds the agent name ("Claude" / "Codex")
+  const int colW = (w - pad * 2 - agentLabelW - 12) / 2;  // 5H | 7D columns
 
-  if (hasUsage) {
-    auto quota = [&](int x, const char* label, float pct, const char* iso) {
+  // One labelled agent row: "<Agent>  5H[gauge]NN% rem   7D[gauge]NN% rem".
+  auto agentRow = [&](const char* agent, float a, const char* aIso, float b, const char* bIso) {
+    renderer.drawText(SMALL_FONT_ID, pad, y, agent, true, EpdFontFamily::BOLD);
+    const int x0 = pad + agentLabelW;
+    auto quota = [&](int x, const char* tag, float pct, const char* iso) {
       if (pct < 0) return;
-      // Right-aligned "NN% · Xh Ym"; the gauge fills the space between.
       std::string rem = formatResetRemaining(iso);
       char rt[28];
       if (!rem.empty())
-        snprintf(rt, sizeof(rt), "%d%%%s  %s", (int)(pct + 0.5f), stale ? "*" : "", rem.c_str());
+        snprintf(rt, sizeof(rt), "%d%%%s %s", (int)(pct + 0.5f), stale ? "*" : "", rem.c_str());
       else
         snprintf(rt, sizeof(rt), "%d%%%s", (int)(pct + 0.5f), stale ? "*" : "");
-      renderer.drawText(SMALL_FONT_ID, x, y, label, true, EpdFontFamily::BOLD);
-      const int lw = renderer.getTextWidth(SMALL_FONT_ID, label, EpdFontFamily::BOLD);
+      renderer.drawText(SMALL_FONT_ID, x, y, tag, true, EpdFontFamily::BOLD);
+      const int lw = renderer.getTextWidth(SMALL_FONT_ID, tag, EpdFontFamily::BOLD);
       const int rw = renderer.getTextWidth(SMALL_FONT_ID, rt);
-      const int gx = x + lw + 8;
-      const int gw = colW - lw - 8 - rw - 8;
+      const int gx = x + lw + 6;
+      const int gw = colW - lw - 6 - rw - 6;
       const int gh = lineS - 4;
       if (gw > 8) {
         renderer.drawRect(gx, y + 1, gw, gh);
@@ -632,11 +660,13 @@ int AgentDashboardActivity::drawLimitsFooter() const {
       }
       renderer.drawText(SMALL_FONT_ID, x + colW - rw, y, rt, true);
     };
-    quota(pad, "5H", five, fiveReset);
-    quota(pad + colW + 16, "7D", seven, sevenReset);
+    quota(x0, "5H", a, aIso);
+    quota(x0 + colW + 12, "7D", b, bIso);
     y += lineS + 6;
-  }
+  };
 
+  if (hasClaude) agentRow("Claude", five, fiveReset, seven, sevenReset);
+  if (hasCodex) agentRow("Codex", cxFive, cxFiveReset, cxSeven, cxSevenReset);
   if (hasSub) {
     renderer.drawText(SMALL_FONT_ID, pad, y,
                       renderer.truncatedText(SMALL_FONT_ID, subLine, w - pad * 2).c_str(), true);
@@ -739,9 +769,26 @@ void AgentDashboardActivity::renderOverview(const OverviewRow* rows, int n, int 
   drawBrandedHeader("AgentDeck", nullptr);
   int y = m.topPadding + m.headerHeight + m.verticalSpacing;
 
-  // Connection line
-  char cl[80];
-  snprintf(cl, sizeof(cl), "Connected \xC2\xB7 %s", AgentDeck::Net::wsBridgeIp());
+  // Footer first so we know the content ceiling.
+  const int footTop = drawLimitsFooter();
+  const int rowsBottom = (footTop < pageH ? footTop : pageH - m.buttonHintsHeight) - 8;
+
+  const int rowH = kGlyphPx + 12;     // glyph height; holds project + activity lines
+  const int rowStride = rowH + 6;
+  int maxVisible = (rowsBottom - (y + lineS + 8)) / rowStride;  // rows that fit below the conn line
+  if (maxVisible < 1) maxVisible = 1;
+
+  // Connection line + scroll position ("showing X-Y of N").
+  char cl[96];
+  if (n > maxVisible) {
+    const int firstShown = (overviewTop < 0 ? 0 : overviewTop) + 1;
+    int lastShown = firstShown - 1 + maxVisible;
+    if (lastShown > n) lastShown = n;
+    snprintf(cl, sizeof(cl), "Connected \xC2\xB7 %s \xC2\xB7 %d-%d/%d", AgentDeck::Net::wsBridgeIp(), firstShown,
+             lastShown, n);
+  } else {
+    snprintf(cl, sizeof(cl), "Connected \xC2\xB7 %s \xC2\xB7 %d", AgentDeck::Net::wsBridgeIp(), n);
+  }
   renderer.drawText(SMALL_FONT_ID, pad, y, cl, true);
   y += lineS + 8;
 
@@ -753,52 +800,55 @@ void AgentDashboardActivity::renderOverview(const OverviewRow* rows, int n, int 
     snprintf(b, sizeof(b), "%d agent%s need you", awaitingCount, awaitingCount > 1 ? "s" : "");
     renderer.drawText(UI_10_FONT_ID, pad + 12, y + 6, b, false, EpdFontFamily::BOLD);
     y += bh + 10;
+    // Recompute visible rows below the banner.
+    maxVisible = (rowsBottom - y) / rowStride;
+    if (maxVisible < 1) maxVisible = 1;
   }
-
-  // Footer first so we know the content ceiling.
-  const int footTop = drawLimitsFooter();
-  const int rowsBottom = (footTop < pageH ? footTop : pageH - m.buttonHintsHeight) - 8;
 
   if (n == 0) {
     renderer.drawText(UI_10_FONT_ID, pad, y, dataReceived ? "No active sessions" : "Waiting for agent state\xE2\x80\xA6",
                       true);
   } else {
-    const int rowH = kGlyphPx + 12;
-    int i = 0;
-    for (; i < n; i++) {
-      if (y + rowH > rowsBottom) break;  // overflow → "+N more" below
+    // Keep the cursor inside the scroll window (clamp here where geometry is known).
+    if (overviewCursor < overviewTop) overviewTop = overviewCursor;
+    if (overviewCursor >= overviewTop + maxVisible) overviewTop = overviewCursor - maxVisible + 1;
+    if (overviewTop > n - maxVisible) overviewTop = (n > maxVisible) ? n - maxVisible : 0;
+    if (overviewTop < 0) overviewTop = 0;
+
+    for (int i = overviewTop; i < n && i < overviewTop + maxVisible; i++) {
       const bool sel = (i == overviewCursor);
       if (sel) renderer.drawRect(pad - 6, y - 3, w - pad * 2 + 12, rowH);
 
       const uint8_t* g = glyphForAgent(rows[i].agentType);
       if (g) renderer.drawIcon(g, pad, y + (rowH - kGlyphPx) / 2, kGlyphPx, kGlyphPx);
       const int tx = pad + kGlyphPx + 12;
-      const int ty = y + (rowH - line10) / 2;
+      const bool hasAct = rows[i].activity[0] != '\0';
+      const int ty1 = hasAct ? y + 3 : y + (rowH - line10) / 2;  // project line
 
-      // Status badge (right-aligned). Awaiting is inverted so it pops.
+      // Status badge (right-aligned, aligned to the project line).
       const char* badge = stateBadge(rows[i].state);
       const bool aw = rows[i].awaiting;
       const int bTextW = renderer.getTextWidth(SMALL_FONT_ID, badge, EpdFontFamily::BOLD);
       const int bw = bTextW + (aw ? 14 : 0);
       const int bx = w - pad - bw;
       if (aw) {
-        const int bh = lineS + 6;
-        renderer.fillRect(bx, ty - 2, bw, bh, true);
-        renderer.drawText(SMALL_FONT_ID, bx + 7, ty + 1, badge, false, EpdFontFamily::BOLD);
+        renderer.fillRect(bx, ty1 - 2, bw, lineS + 6, true);
+        renderer.drawText(SMALL_FONT_ID, bx + 7, ty1 + 1, badge, false, EpdFontFamily::BOLD);
       } else {
-        renderer.drawText(SMALL_FONT_ID, bx, ty + 1, badge, true, EpdFontFamily::REGULAR);
+        renderer.drawText(SMALL_FONT_ID, bx, ty1 + 1, badge, true, EpdFontFamily::REGULAR);
       }
 
       // Project name (bold when selected), truncated to leave room for the badge.
       const auto style = sel ? EpdFontFamily::BOLD : EpdFontFamily::REGULAR;
       std::string p = renderer.truncatedText(UI_10_FONT_ID, rows[i].project, bx - tx - 12, style);
-      renderer.drawText(UI_10_FONT_ID, tx, ty, p.c_str(), true, style);
-      y += rowH + 6;
-    }
-    if (i < n) {
-      char more[24];
-      snprintf(more, sizeof(more), "+%d more\xE2\x80\xA6", n - i);
-      renderer.drawText(SMALL_FONT_ID, pad, y, more, true);
+      renderer.drawText(UI_10_FONT_ID, tx, ty1, p.c_str(), true, style);
+
+      // Activity one-liner under the project (compact).
+      if (hasAct) {
+        std::string a = renderer.truncatedText(SMALL_FONT_ID, rows[i].activity, w - tx - pad);
+        renderer.drawText(SMALL_FONT_ID, tx, ty1 + line10, a.c_str(), true);
+      }
+      y += rowStride;
     }
   }
 
@@ -812,14 +862,17 @@ void AgentDashboardActivity::renderOverview(const OverviewRow* rows, int n, int 
 void AgentDashboardActivity::renderDetail() {
   const auto& m = UITheme::getInstance().getMetrics();
   const int w = renderer.getScreenWidth();
+  const int pageH = renderer.getScreenHeight();
   const int pad = m.contentSidePadding;
   const int line10 = renderer.getLineHeight(UI_10_FONT_ID);
   const int lineS = renderer.getLineHeight(SMALL_FONT_ID);
 
-  // Snapshot the selected session under the lock.
-  char project[40] = {0}, agentType[16] = {0}, model[32] = {0}, state[20] = {0}, tool[40] = {0}, question[200] = {0};
+  // Snapshot the selected session + its timeline entries under one lock.
+  char project[40] = {0}, agentType[16] = {0}, model[32] = {0}, state[20] = {0}, tool[40] = {0};
   uint32_t elapsed = 0;
   bool found = false;
+  char tlText[AgentDeck::DashboardState::TIMELINE_CAP][96];
+  int tlCount = 0;
   AgentDeck::lockState();
   const auto& s = AgentDeck::g_state;
   for (uint8_t i = 0; i < s.sessionCount; i++) {
@@ -830,7 +883,6 @@ void AgentDashboardActivity::renderDetail() {
       strncpy(model, se.modelName, sizeof(model) - 1);
       strncpy(state, se.state, sizeof(state) - 1);
       strncpy(tool, se.currentTool, sizeof(tool) - 1);
-      strncpy(question, se.question, sizeof(question) - 1);
       elapsed = se.elapsedSec;
       found = true;
       break;
@@ -841,9 +893,20 @@ void AgentDashboardActivity::renderDetail() {
     strncpy(agentType, s.agentType, sizeof(agentType) - 1);
     strncpy(model, s.modelName, sizeof(model) - 1);
     strncpy(tool, s.currentTool, sizeof(tool) - 1);
-    strncpy(question, s.question, sizeof(question) - 1);
     strncpy(state, agentStateLabel(s.state), sizeof(state) - 1);
     found = s.dataReceived;
+  }
+  // Matching timeline entries, oldest → newest (ring: head is oldest when full).
+  const int cnt = s.timelineCount;
+  for (int k = 0; k < cnt; k++) {
+    int idx = (s.timelineCount < AgentDeck::DashboardState::TIMELINE_CAP) ? k
+                                                               : (s.timelineHead + k) % AgentDeck::DashboardState::TIMELINE_CAP;
+    const AgentDeck::TimelineItem& t = s.timeline[idx];
+    if (selectedSid[0] && strcmp(t.sid, selectedSid) != 0) continue;
+    if (t.text[0] == '\0') continue;
+    strncpy(tlText[tlCount], t.text, sizeof(tlText[0]) - 1);
+    tlText[tlCount][sizeof(tlText[0]) - 1] = '\0';
+    if (++tlCount >= AgentDeck::DashboardState::TIMELINE_CAP) break;
   }
   AgentDeck::unlockState();
 
@@ -853,50 +916,80 @@ void AgentDashboardActivity::renderDetail() {
 
   if (!found) {
     renderer.drawText(UI_10_FONT_ID, pad, y, "Session ended", true, EpdFontFamily::BOLD);
-  } else {
-    const uint8_t* g = glyphForAgent(agentType);
-    int textX = pad;
-    if (g) {
-      renderer.drawIcon(g, pad, y, kGlyphPx, kGlyphPx);
-      textX = pad + kGlyphPx + 12;
-    }
-    renderer.drawText(UI_10_FONT_ID, textX, y + (kGlyphPx - line10) / 2,
-                      renderer.truncatedText(UI_10_FONT_ID, project[0] ? project : "session", w - textX - pad,
-                                             EpdFontFamily::BOLD)
-                          .c_str(),
-                      true, EpdFontFamily::BOLD);
-    y += (g ? kGlyphPx : line10) + 14;
+    const auto labels = mappedInput.mapLabels("Back", "", "", "");
+    GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
+    renderer.displayBuffer();
+    return;
+  }
 
-    auto field = [&](const char* label, const char* value) {
-      if (!value || !value[0]) return;
-      char ln[128];
-      snprintf(ln, sizeof(ln), "%s: %s", label, value);
-      renderer.drawText(SMALL_FONT_ID, pad, y, renderer.truncatedText(SMALL_FONT_ID, ln, w - pad * 2).c_str(), true);
-      y += lineS + 6;
-    };
-    field("Agent", agentType);
-    field("Model", model);
-    field("State", state);
-    field("Tool", tool);
-    if (elapsed > 0) {
-      char e[32];
-      if (elapsed >= 60)
-        snprintf(e, sizeof(e), "%um %us", (unsigned)(elapsed / 60), (unsigned)(elapsed % 60));
-      else
-        snprintf(e, sizeof(e), "%us", (unsigned)elapsed);
-      field("Elapsed", e);
+  // Title row: glyph + project.
+  const uint8_t* g = glyphForAgent(agentType);
+  int textX = pad;
+  if (g) {
+    renderer.drawIcon(g, pad, y, kGlyphPx, kGlyphPx);
+    textX = pad + kGlyphPx + 12;
+  }
+  renderer.drawText(UI_10_FONT_ID, textX, y + (kGlyphPx - line10) / 2,
+                    renderer.truncatedText(UI_10_FONT_ID, project[0] ? project : "session", w - textX - pad,
+                                           EpdFontFamily::BOLD)
+                        .c_str(),
+                    true, EpdFontFamily::BOLD);
+  y += (g ? kGlyphPx : line10) + 8;
+
+  // Compact one-line meta: agent · model · state (· elapsed).
+  char meta[140];
+  int mo = snprintf(meta, sizeof(meta), "%s", agentType[0] ? agentType : "agent");
+  if (model[0]) mo += snprintf(meta + mo, sizeof(meta) - mo, " \xC2\xB7 %s", model);
+  if (state[0]) mo += snprintf(meta + mo, sizeof(meta) - mo, " \xC2\xB7 %s", state);
+  if (elapsed > 0) {
+    if (elapsed >= 60)
+      mo += snprintf(meta + mo, sizeof(meta) - mo, " \xC2\xB7 %um", (unsigned)(elapsed / 60));
+    else
+      mo += snprintf(meta + mo, sizeof(meta) - mo, " \xC2\xB7 %us", (unsigned)elapsed);
+  }
+  renderer.drawText(SMALL_FONT_ID, pad, y, renderer.truncatedText(SMALL_FONT_ID, meta, w - pad * 2).c_str(), true);
+  y += lineS + 6;
+  if (tool[0]) {
+    char tl[80];
+    snprintf(tl, sizeof(tl), "Now: %s", tool);
+    renderer.drawText(SMALL_FONT_ID, pad, y, renderer.truncatedText(SMALL_FONT_ID, tl, w - pad * 2).c_str(), true);
+    y += lineS + 6;
+  }
+
+  // ── Activity timeline (scrollable) ──
+  renderer.drawLine(pad, y, w - pad, y);
+  y += 8;
+  renderer.drawText(SMALL_FONT_ID, pad, y, "Activity", true, EpdFontFamily::BOLD);
+  y += lineS + 4;
+
+  const int listTop = y;
+  const int listBottom = pageH - m.buttonHintsHeight - 8;
+
+  if (tlCount == 0) {
+    renderer.drawText(SMALL_FONT_ID, pad, y, "No recent activity yet\xE2\x80\xA6", true);
+  } else {
+    // Flatten matching entries to wrapped lines, newest first, so the latest
+    // activity is at the top and Up/Down scrolls back through history.
+    std::vector<std::string> lines;
+    for (int k = tlCount - 1; k >= 0; k--) {
+      auto wrapped = renderer.wrappedText(SMALL_FONT_ID, tlText[k], w - pad * 2 - 10, 3);
+      for (size_t li = 0; li < wrapped.size(); li++)
+        lines.push_back((li == 0 ? "\xE2\x80\xA2 " : "  ") + wrapped[li]);  // bullet first line
     }
-    if (question[0]) {
-      y += 6;
-      auto lines = renderer.wrappedText(SMALL_FONT_ID, question, w - pad * 2, 4);
-      for (const auto& l : lines) {
-        renderer.drawText(SMALL_FONT_ID, pad, y, l.c_str(), true);
-        y += lineS;
-      }
+    const int visibleLines = (listBottom - listTop) / lineS;
+    int maxScroll = (int)lines.size() - visibleLines;
+    if (maxScroll < 0) maxScroll = 0;
+    if (detailScroll > maxScroll) detailScroll = maxScroll;
+    if (detailScroll < 0) detailScroll = 0;
+    int ly = listTop;
+    for (int i = detailScroll; i < (int)lines.size() && ly + lineS <= listBottom; i++) {
+      renderer.drawText(SMALL_FONT_ID, pad, ly, lines[i].c_str(), true);
+      ly += lineS;
     }
   }
 
-  const auto labels = mappedInput.mapLabels("Back", "", "", "");
+  const bool scrollable = tlCount > 0;
+  const auto labels = mappedInput.mapLabels("Back", "", scrollable ? "Up" : "", scrollable ? "Down" : "");
   GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
   renderer.displayBuffer();
 }

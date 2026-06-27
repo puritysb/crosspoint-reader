@@ -68,7 +68,10 @@ class AgentDashboardActivity final : public Activity {
 
   // Which screen the Connected dashboard is showing. Overview is home; OK opens a
   // session's Decision Card (awaiting) or read-only Detail (everything else).
-  enum class ViewMode : uint8_t { Overview, Card, Detail };
+  // Overview is home; opening a session goes to Detail. Detail shows the session
+  // timeline AND, when the session is awaiting, the decision options inline at the
+  // bottom (scroll down to reach them) — no separate decision card.
+  enum class ViewMode : uint8_t { Overview, Detail };
 
   void onWifiSelectionComplete(bool connected);
   void startNetworking();
@@ -82,7 +85,6 @@ class AgentDashboardActivity final : public Activity {
   int collectOverview(OverviewRow* out, int cap) const;
   void handleButtons();
   void applyDecision(const AwaitingItem& it, bool approve, int optionIndex);
-  void renderCard(const AwaitingItem& it, int idx, int total);
   void renderOverview(const OverviewRow* rows, int n, int awaitingCount);
   void renderDetail();
   // Branded header (AgentDeck mark + title) shared by every Connected screen.
@@ -117,7 +119,8 @@ class AgentDashboardActivity final : public Activity {
   ViewMode viewMode = ViewMode::Overview;
   int overviewCursor = 0;     // selected row in the Overview list
   int overviewTop = 0;        // first visible row (scroll window)
-  int detailScroll = 0;       // first visible timeline line in Detail
+  int detailScroll = 0;       // first visible content line in Detail
+  int detailMaxScroll = 0;    // set by renderDetail; lets handleButtons know "at bottom"
   char selectedSid[64] = {0}; // session opened into Card/Detail (re-resolved each frame)
   // Installed SD CJK font id (the reader's font when it's an SD font) so CJK text
   // renders instead of □; 0 when none — Latin-only built-in UI fonts have no CJK.

@@ -453,77 +453,60 @@ void AgentDashboardActivity::handleButtons() {
     return;
   }
 
-  // ── CARD: a session opened for a go/no-go decision (or option pick) ──
-  if (viewMode == ViewMode::Card) {
+  // ── DETAIL: session timeline + (when awaiting) the decision options inline ──
+  if (viewMode == ViewMode::Detail) {
+    // Resolve the decision for this session (if awaiting) so the bottom of the
+    // scroll offers the choices. optCount = real options (focused multi-select)
+    // else 2 synthetic rows [Approve, Deny] for a gate / yes-no prompt.
     AwaitingItem items[kAwaitingCap];
     const int n = collectAwaiting(items, kAwaitingCap);
     int idx = -1;
     for (int i = 0; i < n; i++)
       if (selectedSid[0] && strcmp(items[i].sid, selectedSid) == 0) { idx = i; break; }
-    if (n == 0 || idx < 0) {  // decision resolved / session gone → back to overview
-      viewMode = ViewMode::Overview;
-      requestUpdate();
-      return;
+    const bool awaiting = (idx >= 0);
+    bool optMode = false;
+    int optCount = 0;
+    if (awaiting) {
+      const AwaitingItem& it = items[idx];
+      optMode = it.isFocused && it.isOption && it.optionCount > 0;
+      optCount = optMode ? it.optionCount : 2;  // [0]=Approve, [1]=Deny for a gate
     }
-    triageIndex = idx;
-    const AwaitingItem& it = items[idx];
-    const bool optMode = it.isFocused && it.isOption && it.optionCount > 0;
-    const int optCount = optMode ? it.optionCount : 0;
-    if (optMode) {
+    if (optCount > 0) {
       if (optionCursor >= optCount) optionCursor = optCount - 1;
       if (optionCursor < 0) optionCursor = 0;
     }
+    const bool atBottom = (detailScroll >= detailMaxScroll);
 
-    // Up/Down: move the option cursor (option prompt) or page between awaiting
-    // sessions (triage) — re-pinning selectedSid so the card follows the page.
-    if (mappedInput.wasReleased(Btn::NavPrevious)) {
-      if (optMode) optionCursor = (optionCursor - 1 + optCount) % optCount;
-      else if (n > 1) { idx = (idx - 1 + n) % n; strncpy(selectedSid, items[idx].sid, sizeof(selectedSid) - 1); optionCursor = 0; }
+    // Up/Down: scroll the content; once at the bottom (options in view) the same
+    // buttons move the option highlight, so it's one continuous gesture.
+    if (mappedInput.wasReleased(Btn::NavNext)) {  // Down
+      if (awaiting && atBottom && optionCursor < optCount - 1) optionCursor++;
+      else if (detailScroll < detailMaxScroll) detailScroll++;
       requestUpdate();
     }
-    if (mappedInput.wasReleased(Btn::NavNext)) {
-      if (optMode) optionCursor = (optionCursor + 1) % optCount;
-      else if (n > 1) { idx = (idx + 1) % n; strncpy(selectedSid, items[idx].sid, sizeof(selectedSid) - 1); optionCursor = 0; }
+    if (mappedInput.wasReleased(Btn::NavPrevious)) {  // Up
+      if (awaiting && atBottom && optionCursor > 0) optionCursor--;
+      else if (detailScroll > 0) detailScroll--;
       requestUpdate();
     }
 
-    // Confirm = approve / select the highlighted option.
-    if (mappedInput.wasReleased(Btn::Confirm)) {
+    // OK confirms the highlighted option once the decision is in view.
+    if (mappedInput.wasReleased(Btn::Confirm) && awaiting && atBottom) {
+      const AwaitingItem& it = items[idx];
       if (optMode) {
         int optIndex = optionCursor;
         AgentDeck::lockState();
         if (optionCursor < AgentDeck::g_state.optionCount) optIndex = AgentDeck::g_state.options[optionCursor].index;
         AgentDeck::unlockState();
-        applyDecision(items[idx], true, optIndex);
+        applyDecision(it, true, optIndex);
       } else {
-        applyDecision(items[idx], true, -1);
+        applyDecision(it, optionCursor == 0, -1);  // 0=Approve, 1=Deny
       }
-    }
-
-    // Back: short press = deny; long hold = back to overview (don't exit dashboard).
-    if (mappedInput.wasReleased(Btn::Back)) {
-      const uint32_t held = millis() - backPressMs;
-      if (held >= kExitHoldMs) {
-        viewMode = ViewMode::Overview;
-        requestUpdate();
-      } else {
-        applyDecision(items[idx], false, -1);
-      }
-    }
-    return;
-  }
-
-  // ── DETAIL: read-only session inspector ──
-  if (viewMode == ViewMode::Detail) {
-    // Up/Down scroll the activity timeline; clamping happens in renderDetail.
-    if (mappedInput.wasReleased(Btn::NavPrevious)) {
-      if (detailScroll > 0) detailScroll--;
+      // The daemon drops the awaiting state; return to the overview after deciding.
+      viewMode = ViewMode::Overview;
       requestUpdate();
     }
-    if (mappedInput.wasReleased(Btn::NavNext)) {
-      detailScroll++;
-      requestUpdate();
-    }
+
     if (mappedInput.wasReleased(Btn::Back)) {
       viewMode = ViewMode::Overview;
       requestUpdate();
@@ -546,17 +529,17 @@ void AgentDashboardActivity::handleButtons() {
     requestUpdate();
   }
 
-  // Confirm opens the selected row: awaiting → Card, otherwise → Detail.
+  // Confirm opens the selected session's Detail (timeline + any inline decision).
   if (mappedInput.wasReleased(Btn::Confirm) && n > 0) {
     const OverviewRow& sel = rows[overviewCursor];
     strncpy(selectedSid, sel.sid, sizeof(selectedSid) - 1);
     selectedSid[sizeof(selectedSid) - 1] = '\0';
     optionCursor = 0;
     detailScroll = 0;
-    viewMode = sel.awaiting ? ViewMode::Card : ViewMode::Detail;
-    // Detail shows the session timeline. The live timeline_event stream is
-    // forward-only, so request this session's recent history to fill it on open.
-    if (viewMode == ViewMode::Detail) AgentDeck::Commands::sendQuerySessionTimeline(selectedSid);
+    viewMode = ViewMode::Detail;
+    // The live timeline_event stream is forward-only, so request this session's
+    // recent history to fill Detail on open.
+    AgentDeck::Commands::sendQuerySessionTimeline(selectedSid);
     requestUpdate();
   }
 
@@ -747,86 +730,6 @@ int AgentDashboardActivity::drawLimitsFooter() const {
                       renderer.truncatedText(SMALL_FONT_ID, subLine, w - pad * 2).c_str(), true);
   }
   return top;
-}
-
-void AgentDashboardActivity::renderCard(const AwaitingItem& it, int idx, int total) {
-  const auto& metrics = UITheme::getInstance().getMetrics();
-  const int w = renderer.getScreenWidth();
-  const int pageH = renderer.getScreenHeight();
-  const int pad = metrics.contentSidePadding;
-  const int line10 = renderer.getLineHeight(UI_10_FONT_ID);
-  const int lineS = renderer.getLineHeight(SMALL_FONT_ID);
-
-  renderer.clearScreen();
-
-  // Branded header with a triage counter subtitle ("2 / 3") when several await.
-  char sub[24] = {0};
-  if (total > 1) snprintf(sub, sizeof(sub), "%d / %d", idx + 1, total);
-  drawBrandedHeader("Decision", total > 1 ? sub : nullptr);
-  int y = metrics.topPadding + metrics.headerHeight + metrics.verticalSpacing;
-
-  // agent glyph + agent · project
-  const uint8_t* g = glyphForAgent(it.agentType);
-  int textX = pad;
-  if (g) {
-    renderer.drawIcon(g, pad, y, kGlyphPx, kGlyphPx);
-    textX = pad + kGlyphPx + 12;
-  }
-  char who[80];
-  snprintf(who, sizeof(who), "%s%s%s", it.agentType[0] ? it.agentType : "agent", it.project[0] ? " \xC2\xB7 " : "",
-           it.project);
-  renderer.drawText(UI_10_FONT_ID, textX, y + (kGlyphPx - line10) / 2,
-                    renderer.truncatedText(UI_10_FONT_ID, who, w - textX - pad, EpdFontFamily::BOLD).c_str(), true,
-                    EpdFontFamily::BOLD);
-  y += (g ? kGlyphPx : line10) + 12;
-
-  // Question (wrapped)
-  if (it.question[0]) {
-    const int qf = fontForText(UI_10_FONT_ID, it.question);  // CJK questions → SD CJK font
-    const int qh = renderer.getLineHeight(qf);
-    auto lines = renderer.wrappedText(qf, it.question, w - pad * 2, 5);
-    for (const auto& ln : lines) {
-      renderer.drawText(qf, pad, y, ln.c_str(), true);
-      y += qh;
-    }
-    y += 8;
-  }
-
-  const bool optMode = it.isFocused && it.isOption && it.optionCount > 0;
-  if (optMode) {
-    AgentDeck::PromptOption opts[8];
-    int oc = 0;
-    AgentDeck::lockState();
-    oc = AgentDeck::g_state.optionCount;
-    if (oc > 8) oc = 8;
-    for (int i = 0; i < oc; i++) opts[i] = AgentDeck::g_state.options[i];
-    AgentDeck::unlockState();
-    int cur = optionCursor;
-    if (cur >= oc) cur = oc - 1;
-    if (cur < 0) cur = 0;
-    for (int i = 0; i < oc; i++) {
-      char row[100];
-      snprintf(row, sizeof(row), "%s %s", (i == cur) ? ">" : "  ", opts[i].label);
-      renderer.drawText(UI_10_FONT_ID, pad, y, renderer.truncatedText(UI_10_FONT_ID, row, w - pad * 2).c_str(), true,
-                        (i == cur) ? EpdFontFamily::BOLD : EpdFontFamily::REGULAR);
-      y += line10 + 2;
-    }
-  } else {
-    renderer.drawText(UI_10_FONT_ID, pad, y, "Approve this action?", true, EpdFontFamily::BOLD);
-  }
-
-  // Discoverability: tell the user how to leave the card without deciding.
-  renderer.drawText(SMALL_FONT_ID, pad, pageH - metrics.buttonHintsHeight - lineS - 6, "Hold Back: back to overview",
-                    true);
-
-  // Physically-aligned hints at the actual button positions. Up/Down navigate
-  // options (option prompt) or awaiting sessions (triage); shown only when useful.
-  const bool hasNav = optMode || total > 1;
-  const auto labels =
-      mappedInput.mapLabels("Deny", optMode ? "Select" : "Approve", hasNav ? "Prev" : "", hasNav ? "Next" : "");
-  GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
-
-  renderer.displayBuffer();
 }
 
 void AgentDashboardActivity::renderOverview(const OverviewRow* rows, int n, int awaitingCount) {
@@ -1040,66 +943,125 @@ void AgentDashboardActivity::renderDetail() {
     y += lineS + 6;
   }
 
-  // ── Activity timeline (scrollable) ──
+  // Collect the decision for this session (if awaiting) so its options sit at the
+  // bottom of the scroll. Real options come from the focused session's options[];
+  // a gate / yes-no prompt synthesizes [Approve, Deny].
+  AwaitingItem aw[kAwaitingCap];
+  const int awn = collectAwaiting(aw, kAwaitingCap);
+  int awIdx = -1;
+  for (int i = 0; i < awn; i++)
+    if (selectedSid[0] && strcmp(aw[i].sid, selectedSid) == 0) { awIdx = i; break; }
+  const bool awaiting = (awIdx >= 0);
+  const bool optMode = awaiting && aw[awIdx].isFocused && aw[awIdx].isOption && aw[awIdx].optionCount > 0;
+  char optLabels[8][80];
+  int optCount = 0;
+  if (optMode) {
+    AgentDeck::lockState();
+    optCount = AgentDeck::g_state.optionCount;
+    if (optCount > 8) optCount = 8;
+    for (int i = 0; i < optCount; i++) {
+      strncpy(optLabels[i], AgentDeck::g_state.options[i].label, sizeof(optLabels[0]) - 1);
+      optLabels[i][sizeof(optLabels[0]) - 1] = '\0';
+    }
+    AgentDeck::unlockState();
+  } else if (awaiting) {
+    optCount = 2;
+    strncpy(optLabels[0], "Approve", sizeof(optLabels[0]) - 1);
+    strncpy(optLabels[1], "Deny", sizeof(optLabels[0]) - 1);
+  }
+
+  // ── Scrollable content: timeline (oldest→newest) then the decision block ──
   renderer.drawLine(pad, y, w - pad, y);
   y += 8;
-  renderer.drawText(SMALL_FONT_ID, pad, y, "Activity", true, EpdFontFamily::BOLD);
+  renderer.drawText(SMALL_FONT_ID, pad, y, awaiting ? "Activity \xC2\xB7 scroll down to decide" : "Activity", true,
+                    EpdFontFamily::BOLD);
   y += lineS + 4;
 
   const int listTop = y;
   const int listBottom = pageH - m.buttonHintsHeight - 8;
 
+  // Flat line list. lineOpt: -1 normal, -2 heading (bold), >=0 = option index.
+  std::vector<std::string> lines;
+  std::vector<int> lineFonts;
+  std::vector<int> lineOpt;
+  for (int k = 0; k < tlCount; k++) {  // chronological
+    const int fid = fontForText(SMALL_FONT_ID, tlText[k]);
+    auto wrapped = renderer.wrappedText(fid, tlText[k], w - pad * 2 - 10, 3);
+    for (size_t li = 0; li < wrapped.size(); li++) {
+      lines.push_back((li == 0 ? "\xE2\x80\xA2 " : "  ") + wrapped[li]);
+      lineFonts.push_back(fid);
+      lineOpt.push_back(-1);
+    }
+  }
   if (tlCount == 0) {
-    renderer.drawText(SMALL_FONT_ID, pad, y, "No recent activity yet\xE2\x80\xA6", true);
-  } else {
-    // Flatten matching entries to wrapped lines, newest first, so the latest
-    // activity is at the top and Up/Down scrolls back through history. Each line
-    // carries the font it was wrapped with — CJK lines use the SD CJK font.
-    std::vector<std::string> lines;
-    std::vector<int> lineFonts;
-    for (int k = tlCount - 1; k >= 0; k--) {
-      const int fid = fontForText(SMALL_FONT_ID, tlText[k]);
-      auto wrapped = renderer.wrappedText(fid, tlText[k], w - pad * 2 - 10, 3);
-      for (size_t li = 0; li < wrapped.size(); li++) {
-        lines.push_back((li == 0 ? "\xE2\x80\xA2 " : "  ") + wrapped[li]);  // bullet first line
-        lineFonts.push_back(fid);
+    lines.push_back("No recent activity yet\xE2\x80\xA6");
+    lineFonts.push_back(SMALL_FONT_ID);
+    lineOpt.push_back(-1);
+  }
+  if (awaiting) {
+    lines.push_back("");
+    lineFonts.push_back(SMALL_FONT_ID);
+    lineOpt.push_back(-1);
+    lines.push_back("Needs your decision:");
+    lineFonts.push_back(SMALL_FONT_ID);
+    lineOpt.push_back(-2);
+    if (aw[awIdx].question[0]) {
+      const int qf = fontForText(SMALL_FONT_ID, aw[awIdx].question);
+      auto qlines = renderer.wrappedText(qf, aw[awIdx].question, w - pad * 2, 4);
+      for (auto& ql : qlines) {
+        lines.push_back(ql);
+        lineFonts.push_back(qf);
+        lineOpt.push_back(-1);
       }
     }
-    const int visibleLines = (listBottom - listTop) / lineS;
-    int maxScroll = (int)lines.size() - visibleLines;
-    if (maxScroll < 0) maxScroll = 0;
-    if (detailScroll > maxScroll) detailScroll = maxScroll;
-    if (detailScroll < 0) detailScroll = 0;
-    int ly = listTop;
-    for (int i = detailScroll; i < (int)lines.size(); i++) {
-      const int lh = renderer.getLineHeight(lineFonts[i]);  // CJK font is taller
-      if (ly + lh > listBottom) break;
-      renderer.drawText(lineFonts[i], pad, ly, lines[i].c_str(), true);
-      ly += lh;
+    for (int i = 0; i < optCount; i++) {
+      lines.push_back(optLabels[i]);
+      lineFonts.push_back(fontForText(SMALL_FONT_ID, optLabels[i]));
+      lineOpt.push_back(i);
     }
   }
 
-  const bool scrollable = tlCount > 0;
-  const auto labels = mappedInput.mapLabels("Back", "", scrollable ? "Up" : "", scrollable ? "Down" : "");
+  const int visibleLines = (listBottom - listTop) / lineS;
+  detailMaxScroll = (int)lines.size() - visibleLines;
+  if (detailMaxScroll < 0) detailMaxScroll = 0;
+  if (detailScroll > detailMaxScroll) detailScroll = detailMaxScroll;
+  if (detailScroll < 0) detailScroll = 0;
+
+  int ly = listTop;
+  for (int i = detailScroll; i < (int)lines.size(); i++) {
+    const int lh = renderer.getLineHeight(lineFonts[i]);
+    if (ly + lh > listBottom) break;
+    const bool isOpt = lineOpt[i] >= 0;
+    const bool sel = isOpt && lineOpt[i] == optionCursor;
+    const auto style = (lineOpt[i] == -2 || sel) ? EpdFontFamily::BOLD : EpdFontFamily::REGULAR;
+    if (sel) {  // highlighted option: inverted bar + caret
+      renderer.fillRect(pad - 4, ly - 1, w - pad * 2 + 8, lh, true);
+      char row[100];
+      snprintf(row, sizeof(row), "\xE2\x96\xB6 %s", lines[i].c_str());
+      renderer.drawText(lineFonts[i], pad, ly, row, false, style);
+    } else if (isOpt) {
+      char row[100];
+      snprintf(row, sizeof(row), "  %s", lines[i].c_str());
+      renderer.drawText(lineFonts[i], pad, ly, row, true, style);
+    } else {
+      renderer.drawText(lineFonts[i], pad, ly, lines[i].c_str(), true, style);
+    }
+    ly += lh;
+  }
+
+  // Hint bar. OK selects the highlighted option only once scrolled to the
+  // decision (atBottom); the heading nudges the user to scroll down to it.
+  const bool atBottom = detailScroll >= detailMaxScroll;
+  const auto labels =
+      mappedInput.mapLabels("Back", (awaiting && atBottom) ? "Select" : "", "Up", "Down");
   GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
   renderer.displayBuffer();
 }
 
 void AgentDashboardActivity::render(RenderLock&&) {
-  // ── Connected: Overview (home) / Card / Detail ──
+  // ── Connected: Overview (home) / Detail (timeline + inline decision) ──
   if (dashState == DashState::Connected) {
-    if (viewMode == ViewMode::Card) {
-      AwaitingItem items[kAwaitingCap];
-      const int n = collectAwaiting(items, kAwaitingCap);
-      for (int i = 0; i < n; i++) {
-        if (selectedSid[0] && strcmp(items[i].sid, selectedSid) == 0) {
-          renderCard(items[i], i, n);
-          return;
-        }
-      }
-      // Selected awaiting item gone — fall through to Overview (handleButtons
-      // resets viewMode on the next loop; don't mutate it from the render task).
-    } else if (viewMode == ViewMode::Detail) {
+    if (viewMode == ViewMode::Detail) {
       renderDetail();
       return;
     }

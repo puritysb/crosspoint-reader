@@ -9,6 +9,11 @@
 #include <string>
 #include <vector>
 
+#include <EpdFontFamily.h>
+#include <SdCardFont.h>
+
+#include <new>
+
 #include "CrossPointSettings.h"
 #include "SilentRestart.h"
 #include "activities/network/WifiSelectionActivity.h"
@@ -152,10 +157,11 @@ void AgentDashboardActivity::onEnter() {
   AgentDeck::unlockState();
   AgentDeck::Net::wsInit();
 
-  // Resolve an installed SD CJK font so Korean/CJK text renders instead of □.
-  // getReaderFontId() returns the SD font id only when the user picked an SD font
-  // (sdFontFamilyName set) — that font carries CJK glyphs when it's a CJK family.
-  cjkFontId = (SETTINGS.sdFontFamilyName[0] != '\0') ? SETTINGS.getReaderFontId() : 0;
+  // CJK font so Korean renders instead of □. Prefer the bundled Noto Sans KR
+  // shipped on the SD (works with zero user setup); else fall back to the reader's
+  // font when the user happens to have a CJK family selected.
+  cjkFontId = loadKoreanFont();
+  if (cjkFontId == 0 && SETTINGS.sdFontFamilyName[0] != '\0') cjkFontId = SETTINGS.getReaderFontId();
 
   AgentLog::line("AGENT", "AgentDashboardActivity onEnter (M2 network)");
   requestUpdate();
@@ -577,6 +583,33 @@ void AgentDashboardActivity::applyDecision(const AwaitingItem& it, bool approve,
   // drops this item from the awaiting set; just repaint.
   optionCursor = 0;
   requestUpdate();
+}
+
+int AgentDashboardActivity::loadKoreanFont() {
+  // Loaded once per boot; the SdCardFont is owned by the renderer thereafter.
+  static int cached = -1;  // -1 = not yet attempted
+  if (cached >= 0) return cached;
+  cached = 0;
+  // Hidden root preferred; visible /fonts/ as a fallback (mirrors SdCardFontRegistry).
+  const char* paths[] = {"/.fonts/AgentDeckKR/AgentDeckKR_12.cpfont", "/fonts/AgentDeckKR/AgentDeckKR_12.cpfont"};
+  for (const char* path : paths) {
+    auto* font = new (std::nothrow) SdCardFont();
+    if (!font) return cached;
+    if (font->load(path)) {
+      const int id = 0x41444B52;  // 'ADKR' — fixed aux id, distinct from reader font
+      if (renderer.getFontMap().count(id) == 0) {
+        renderer.registerSdCardFont(id, font);
+        EpdFontFamily fam(font->getEpdFont(0), font->getEpdFont(1), font->getEpdFont(2), font->getEpdFont(3));
+        renderer.insertFont(id, fam);
+        cached = id;
+        AgentLog::line("AGENT", "Korean font loaded: %s", path);
+        return cached;
+      }
+    }
+    delete font;
+  }
+  AgentLog::line("AGENT", "Korean font not on SD (CJK falls back to reader font / box)");
+  return cached;
 }
 
 int AgentDashboardActivity::fontForText(int uiFontId, const char* text) const {

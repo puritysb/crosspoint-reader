@@ -127,6 +127,11 @@ class AgentDashboardActivity final : public Activity {
   // the given UI font id. Use the return value for both measuring and drawing.
   int fontForText(int uiFontId, const char* text) const;
 
+  // Load the bundled Noto Sans KR (OFL) font shipped on the SD at /.fonts/ so
+  // Korean renders without the user installing a font. Loaded once; returns its
+  // font id, or 0 when the file isn't present.
+  int loadKoreanFont();
+
   // Decision-card / triage cursors
   int triageIndex = 0;       // which awaiting session is shown
   int optionCursor = 0;      // which option is highlighted (option prompts)

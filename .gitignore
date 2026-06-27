@@ -29,3 +29,6 @@ lib/EpdFont/scripts/output/
 .cache/
 platformio.local.ini
 dist/
+
+# Bundled Korean dashboard font (intentional asset, not a transient build artifact)
+!assets/fonts/AgentDeckKR/AgentDeckKR_12.cpfont

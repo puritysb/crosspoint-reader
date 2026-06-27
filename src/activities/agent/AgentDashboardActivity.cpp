@@ -13,6 +13,7 @@
 #include "agentdeck/agent_state.h"
 #include "agentdeck/mdns_discovery.h"
 #include "agentdeck/ws_client.h"
+#include "components/UITheme.h"  // GUI (theme) + ThemeMetrics + Rect
 #include "fontIds.h"
 
 namespace {
@@ -301,19 +302,8 @@ void AgentDashboardActivity::handleButtons() {
     if (optionCursor < 0) optionCursor = 0;
   }
 
-  // Left/Right always switch between awaiting sessions.
-  if (n > 1 && mappedInput.wasReleased(Btn::Left)) {
-    triageIndex = (triageIndex - 1 + n) % n;
-    optionCursor = 0;
-    requestUpdate();
-  }
-  if (n > 1 && mappedInput.wasReleased(Btn::Right)) {
-    triageIndex = (triageIndex + 1) % n;
-    optionCursor = 0;
-    requestUpdate();
-  }
-
-  // Up/Down move the option cursor when options exist, else page the triage stack.
+  // Up/Down (the two hinted nav buttons) are contextual: move the option cursor
+  // when the card has options, otherwise page between awaiting sessions (triage).
   if (mappedInput.wasReleased(Btn::Up)) {
     if (optMode) optionCursor = (optionCursor - 1 + optCount) % optCount;
     else if (n > 1) triageIndex = (triageIndex - 1 + n) % n;
@@ -321,7 +311,9 @@ void AgentDashboardActivity::handleButtons() {
   }
   if (mappedInput.wasReleased(Btn::Down)) {
     if (optMode) optionCursor = (optionCursor + 1) % optCount;
-    else if (n > 1) triageIndex = (triageIndex + 1) % n;
+    else if (n > 1) {
+      triageIndex = (triageIndex + 1) % n;
+    }
     requestUpdate();
   }
 
@@ -371,23 +363,18 @@ void AgentDashboardActivity::applyDecision(const AwaitingItem& it, bool approve,
 }
 
 void AgentDashboardActivity::renderCard(const AwaitingItem& it, int idx, int total) {
+  const auto& metrics = UITheme::getInstance().getMetrics();
   const int w = renderer.getScreenWidth();
-  const int h = renderer.getScreenHeight();
-  const int line12 = renderer.getLineHeight(UI_12_FONT_ID);
+  const int pad = metrics.contentSidePadding;
   const int line10 = renderer.getLineHeight(UI_10_FONT_ID);
-  const int pad = 16;
 
   renderer.clearScreen();
 
-  char hdr[40];
-  if (total > 1)
-    snprintf(hdr, sizeof(hdr), "DECISION  %d/%d", idx + 1, total);
-  else
-    snprintf(hdr, sizeof(hdr), "DECISION");
-  renderer.drawCenteredText(UI_12_FONT_ID, pad, hdr, true, EpdFontFamily::BOLD);
-  int y = pad + line12 + 8;
-  renderer.drawLine(pad, y, w - pad, y);
-  y += 10;
+  // Native header with a triage counter subtitle ("2 / 3") when several await.
+  char sub[24] = {0};
+  if (total > 1) snprintf(sub, sizeof(sub), "%d / %d", idx + 1, total);
+  GUI.drawHeader(renderer, Rect{0, metrics.topPadding, w, metrics.headerHeight}, "Decision", total > 1 ? sub : nullptr);
+  int y = metrics.topPadding + metrics.headerHeight + metrics.verticalSpacing;
 
   // agent · project
   char who[80];
@@ -420,21 +407,22 @@ void AgentDashboardActivity::renderCard(const AwaitingItem& it, int idx, int tot
     if (cur < 0) cur = 0;
     for (int i = 0; i < oc; i++) {
       char row[100];
-      snprintf(row, sizeof(row), "%s %s", (i == cur) ? ">" : " ", opts[i].label);
+      snprintf(row, sizeof(row), "%s %s", (i == cur) ? ">" : "  ", opts[i].label);
       renderer.drawText(UI_10_FONT_ID, pad, y, renderer.truncatedText(UI_10_FONT_ID, row, w - pad * 2).c_str(), true,
                         (i == cur) ? EpdFontFamily::BOLD : EpdFontFamily::REGULAR);
       y += line10 + 2;
     }
+  } else {
+    renderer.drawText(UI_10_FONT_ID, pad, y, "Approve this action?", true, EpdFontFamily::BOLD);
   }
 
-  // Footer hints
-  char hint[100];
-  if (optMode)
-    snprintf(hint, sizeof(hint), "OK=Select  Up/Down=Move  Back=Deny");
-  else
-    snprintf(hint, sizeof(hint), "OK=Approve  Back=Deny  (hold Back=Exit)");
-  renderer.drawText(SMALL_FONT_ID, pad, h - pad - line10 * 2, hint, true);
-  if (total > 1) renderer.drawText(SMALL_FONT_ID, pad, h - pad - line10, "Left/Right=Switch session", true);
+  // Physically-aligned hints: labels are drawn at the actual button positions.
+  // Up/Down navigate options (in an option prompt) or sessions (triage); they are
+  // only shown when they do something.
+  const bool hasNav = optMode || total > 1;
+  const auto labels =
+      mappedInput.mapLabels("Deny", optMode ? "Select" : "Approve", hasNav ? "Prev" : "", hasNav ? "Next" : "");
+  GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
 
   renderer.displayBuffer();
 }
@@ -452,18 +440,14 @@ void AgentDashboardActivity::render(RenderLock&&) {
     }
   }
 
+  const auto& metrics = UITheme::getInstance().getMetrics();
   const int w = renderer.getScreenWidth();
-  const int h = renderer.getScreenHeight();
-  const int line12 = renderer.getLineHeight(UI_12_FONT_ID);
   const int line10 = renderer.getLineHeight(UI_10_FONT_ID);
-  const int pad = 16;
+  const int pad = metrics.contentSidePadding;
 
   renderer.clearScreen();
-
-  int y = pad + line12;
-  renderer.drawCenteredText(UI_12_FONT_ID, pad, "Agent Dashboard", true, EpdFontFamily::BOLD);
-  renderer.drawLine(pad, y + 6, w - pad, y + 6);
-  y += line12 + 12;
+  GUI.drawHeader(renderer, Rect{0, metrics.topPadding, w, metrics.headerHeight}, "Agent Dashboard");
+  int y = metrics.topPadding + metrics.headerHeight + metrics.verticalSpacing;
 
   // Snapshot the bits we render under the lock so we don't tear mid-paint.
   AgentState agentState = AgentState::DISCONNECTED;
@@ -546,6 +530,8 @@ void AgentDashboardActivity::render(RenderLock&&) {
     }
   }
 
-  renderer.drawText(UI_10_FONT_ID, pad, h - pad - line10, "Back: exit", true);
+  // Native, physically-aligned hint bar. Only Back (=Exit) is actionable here.
+  const auto labels = mappedInput.mapLabels("Exit", "", "", "");
+  GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
   renderer.displayBuffer();
 }

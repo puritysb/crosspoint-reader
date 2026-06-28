@@ -676,8 +676,7 @@ std::vector<size_t> ParsedText::computeLineBreaks(const GfxRenderer& renderer, c
 }
 
 std::vector<size_t> ParsedText::computeGreedyLineBreaks(const GfxRenderer& renderer, const int fontId,
-                                                        const int pageWidth,
-                                                        const std::vector<uint16_t>& wordWidths,
+                                                        const int pageWidth, const std::vector<uint16_t>& wordWidths,
                                                         const std::vector<bool>& continuesVec,
                                                         const std::vector<bool>& noSpaceBeforeVec) {
   const int firstLineIndent = resolveFirstLineIndent(true, renderer, fontId);

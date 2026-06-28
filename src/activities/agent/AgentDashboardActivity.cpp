@@ -1,18 +1,16 @@
 #include "AgentDashboardActivity.h"
 
 #include <ESPmDNS.h>
+#include <EpdFontFamily.h>
+#include <SdCardFont.h>
 #include <WiFi.h>
 
 #include <cstdio>
 #include <cstring>
 #include <ctime>
+#include <new>
 #include <string>
 #include <vector>
-
-#include <EpdFontFamily.h>
-#include <SdCardFont.h>
-
-#include <new>
 
 #include "CrossPointSettings.h"
 #include "SilentRestart.h"
@@ -21,6 +19,7 @@
 #include "agentdeck/agent_commands.h"
 #include "agentdeck/agent_state.h"
 #include "agentdeck/mdns_discovery.h"
+#include "agentdeck/udp_discovery.h"
 #include "agentdeck/ws_client.h"
 #include "components/UITheme.h"  // GUI (theme) + ThemeMetrics + Rect
 #include "components/icons/agentdeck_mark.h"
@@ -28,8 +27,8 @@
 #include "components/icons/glyph_antigravity_16.h"
 #include "components/icons/glyph_claude.h"
 #include "components/icons/glyph_claude_16.h"
-#include "components/icons/glyph_codex_16.h"
 #include "components/icons/glyph_codex.h"
+#include "components/icons/glyph_codex_16.h"
 #include "components/icons/glyph_openclaw.h"
 #include "components/icons/glyph_opencode.h"
 #include "fontIds.h"
@@ -93,13 +92,25 @@ bool hasCJK(const char* s) {
   const unsigned char* p = reinterpret_cast<const unsigned char*>(s);
   while (*p) {
     const unsigned char c = *p;
-    if (c < 0x80) { p++; continue; }
+    if (c < 0x80) {
+      p++;
+      continue;
+    }
     uint32_t cp = 0;
     int n = 0;
-    if ((c & 0xE0) == 0xC0) { cp = c & 0x1F; n = 1; }
-    else if ((c & 0xF0) == 0xE0) { cp = c & 0x0F; n = 2; }
-    else if ((c & 0xF8) == 0xF0) { cp = c & 0x07; n = 3; }
-    else { p++; continue; }
+    if ((c & 0xE0) == 0xC0) {
+      cp = c & 0x1F;
+      n = 1;
+    } else if ((c & 0xF0) == 0xE0) {
+      cp = c & 0x0F;
+      n = 2;
+    } else if ((c & 0xF8) == 0xF0) {
+      cp = c & 0x07;
+      n = 3;
+    } else {
+      p++;
+      continue;
+    }
     p++;
     for (int i = 0; i < n && *p; i++, p++) cp = (cp << 6) | (*p & 0x3F);
     if ((cp >= 0xAC00 && cp <= 0xD7A3) ||  // Hangul syllables
@@ -144,13 +155,19 @@ inline uint32_t fnvUpdate(uint32_t h, const void* data, size_t len) {
 
 const char* agentStateLabel(AgentState s) {
   switch (s) {
-    case AgentState::IDLE: return "Idle";
-    case AgentState::PROCESSING: return "Working";
-    case AgentState::AWAITING_PERMISSION: return "Awaiting permission";
-    case AgentState::AWAITING_OPTION: return "Choosing option";
-    case AgentState::AWAITING_DIFF: return "Reviewing diff";
+    case AgentState::IDLE:
+      return "Idle";
+    case AgentState::PROCESSING:
+      return "Working";
+    case AgentState::AWAITING_PERMISSION:
+      return "Awaiting permission";
+    case AgentState::AWAITING_OPTION:
+      return "Choosing option";
+    case AgentState::AWAITING_DIFF:
+      return "Reviewing diff";
     case AgentState::DISCONNECTED:
-    default: return "Disconnected";
+    default:
+      return "Disconnected";
   }
 }
 }  // namespace
@@ -212,6 +229,11 @@ void AgentDashboardActivity::startNetworking() {
   // omits the countdown. UTC offset 0 so mktime() reads the ISO "…Z" resetsAt right.
   configTime(0, 0, "pool.ntp.org", "time.google.com");
   AgentDeck::Net::mdnsInit();
+  // Bind the UDP discovery socket. WiFi may not be up yet on the first call —
+  // udpInit() is idempotent, so the loop() also retries each tick while we
+  // remain in Discovering. This handles the race where mdnsInit() runs before
+  // WiFi STA completes its handshake.
+  AgentDeck::Net::udpInit();
   dashState = DashState::Discovering;
   requestUpdate();
 }
@@ -291,10 +313,18 @@ void AgentDashboardActivity::loop() {
   }
 
   if (dashState == DashState::Discovering) {
+    // Retry UDP socket bind if WiFi came up after startNetworking(). Idempotent.
+    AgentDeck::Net::udpInit();
+
     AgentDeck::Net::BridgeInfo bridge;
-    if (AgentDeck::Net::mdnsPoll(bridge) && bridge.found) {
-      AgentLog::line("AGENT", "daemon @ %s:%u (agent=%s) — connecting", bridge.ip, (unsigned)bridge.port,
-                     bridge.agent);
+    // mDNS first (canonical TXT-derived ip, daemon/canonical-port priority),
+    // then fall back to the UDP beacon — same BridgeInfo shape, lower trust
+    // because anyone on the subnet can broadcast, but the remoteIP/subnet
+    // guards in udpPoll() keep it safe.
+    bool found = AgentDeck::Net::mdnsPoll(bridge);
+    if (!found) found = AgentDeck::Net::udpPoll(bridge);
+    if (found && bridge.found) {
+      AgentLog::line("AGENT", "daemon @ %s:%u (agent=%s) — connecting", bridge.ip, (unsigned)bridge.port, bridge.agent);
       AgentDeck::Net::wsConnect(bridge.ip, bridge.port, bridge.token);
       dashState = DashState::Connecting;
       connectStartMs = millis();
@@ -362,6 +392,7 @@ void AgentDashboardActivity::onExit() {
   Activity::onExit();
 
   AgentDeck::Net::wsDisconnect();
+  AgentDeck::Net::udpStop();
   MDNS.end();
 
   if (WiFi.getMode() != WIFI_MODE_NULL) {
@@ -444,8 +475,7 @@ int AgentDashboardActivity::collectOverview(OverviewRow* out, int cap) const {
     cp(o.agentType, sizeof(o.agentType), s.agentType);
     const bool aw = s.state == AgentState::AWAITING_PERMISSION || s.state == AgentState::AWAITING_OPTION ||
                     s.state == AgentState::AWAITING_DIFF;
-    cp(o.state, sizeof(o.state),
-       aw ? "awaiting" : (s.state == AgentState::PROCESSING ? "processing" : "idle"));
+    cp(o.state, sizeof(o.state), aw ? "awaiting" : (s.state == AgentState::PROCESSING ? "processing" : "idle"));
     cp(o.activity, sizeof(o.activity), s.currentTool);
     o.awaiting = aw;
   }
@@ -476,7 +506,10 @@ void AgentDashboardActivity::handleButtons() {
     const int n = collectAwaiting(items, kAwaitingCap);
     int idx = -1;
     for (int i = 0; i < n; i++)
-      if (selectedSid[0] && strcmp(items[i].sid, selectedSid) == 0) { idx = i; break; }
+      if (selectedSid[0] && strcmp(items[i].sid, selectedSid) == 0) {
+        idx = i;
+        break;
+      }
     const bool awaiting = (idx >= 0);
     bool optMode = false;
     int optCount = 0;
@@ -494,13 +527,17 @@ void AgentDashboardActivity::handleButtons() {
     // Up/Down: scroll the content; once at the bottom (options in view) the same
     // buttons move the option highlight, so it's one continuous gesture.
     if (mappedInput.wasReleased(Btn::NavNext)) {  // Down
-      if (awaiting && atBottom && optionCursor < optCount - 1) optionCursor++;
-      else if (detailScroll < detailMaxScroll) detailScroll++;
+      if (awaiting && atBottom && optionCursor < optCount - 1)
+        optionCursor++;
+      else if (detailScroll < detailMaxScroll)
+        detailScroll++;
       requestUpdate();
     }
     if (mappedInput.wasReleased(Btn::NavPrevious)) {  // Up
-      if (awaiting && atBottom && optionCursor > 0) optionCursor--;
-      else if (detailScroll > 0) detailScroll--;
+      if (awaiting && atBottom && optionCursor > 0)
+        optionCursor--;
+      else if (detailScroll > 0)
+        detailScroll--;
       requestUpdate();
     }
 
@@ -689,9 +726,9 @@ int AgentDashboardActivity::drawLimitsFooter() const {
   renderer.drawLine(pad, top, w - pad, top);  // separator above the footer
   int y = top + 12;
   constexpr int iconPx = 16;
-  const int iconColW = iconPx + 8;  // solution icon column (replaces the name label)
+  const int iconColW = iconPx + 8;                     // solution icon column (replaces the name label)
   const int colW = (w - pad * 2 - iconColW - 12) / 2;  // 5H | 7D columns
-  const int iconDY = (lineS - iconPx) / 2;  // align icon to the text line
+  const int iconDY = (lineS - iconPx) / 2;             // align icon to the text line
 
   // One agent row: "<icon>  5H[gauge]NN% rem   7D[gauge]NN% rem".
   auto agentRow = [&](const uint8_t* icon, float a, const char* aIso, float b, const char* bIso) {
@@ -746,8 +783,8 @@ int AgentDashboardActivity::drawLimitsFooter() const {
     if (agPlan[0]) {
       renderer.drawIcon(GlyphAntigravity16, sx, y + iconDY, iconPx, iconPx);
       sx += iconColW;
-      renderer.drawText(SMALL_FONT_ID, sx, y,
-                        renderer.truncatedText(SMALL_FONT_ID, agPlan, w - pad - sx).c_str(), true);
+      renderer.drawText(SMALL_FONT_ID, sx, y, renderer.truncatedText(SMALL_FONT_ID, agPlan, w - pad - sx).c_str(),
+                        true);
     }
   }
   return top;
@@ -811,8 +848,8 @@ void AgentDashboardActivity::renderOverview(const OverviewRow* rows, int n, int 
   }
 
   if (n == 0) {
-    renderer.drawText(UI_10_FONT_ID, pad, y, dataReceived ? "No active sessions" : "Waiting for agent state\xE2\x80\xA6",
-                      true);
+    renderer.drawText(UI_10_FONT_ID, pad, y,
+                      dataReceived ? "No active sessions" : "Waiting for agent state\xE2\x80\xA6", true);
   } else {
     // Keep the cursor inside the scroll window (clamp here where geometry is known).
     if (overviewCursor < overviewTop) overviewTop = overviewCursor;
@@ -861,8 +898,7 @@ void AgentDashboardActivity::renderOverview(const OverviewRow* rows, int n, int 
   }
 
   // Hint bar. Up/Down only meaningful with more than one row.
-  const auto labels =
-      mappedInput.mapLabels("Exit", n > 0 ? "Open" : "", n > 1 ? "Up" : "", n > 1 ? "Down" : "");
+  const auto labels = mappedInput.mapLabels("Exit", n > 0 ? "Open" : "", n > 1 ? "Up" : "", n > 1 ? "Down" : "");
   GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
   renderer.displayBuffer();
 }
@@ -907,8 +943,9 @@ void AgentDashboardActivity::renderDetail() {
   // Matching timeline entries, oldest → newest (ring: head is oldest when full).
   const int cnt = s.timelineCount;
   for (int k = 0; k < cnt; k++) {
-    int idx = (s.timelineCount < AgentDeck::DashboardState::TIMELINE_CAP) ? k
-                                                               : (s.timelineHead + k) % AgentDeck::DashboardState::TIMELINE_CAP;
+    int idx = (s.timelineCount < AgentDeck::DashboardState::TIMELINE_CAP)
+                  ? k
+                  : (s.timelineHead + k) % AgentDeck::DashboardState::TIMELINE_CAP;
     const AgentDeck::TimelineItem& t = s.timeline[idx];
     if (selectedSid[0] && strcmp(rawSid(t.sid), rawSid(selectedSid)) != 0) continue;
     if (t.text[0] == '\0') continue;
@@ -937,11 +974,11 @@ void AgentDashboardActivity::renderDetail() {
     renderer.drawIcon(g, pad, y, kGlyphPx, kGlyphPx);
     textX = pad + kGlyphPx + 12;
   }
-  renderer.drawText(UI_10_FONT_ID, textX, y + (kGlyphPx - line10) / 2,
-                    renderer.truncatedText(UI_10_FONT_ID, project[0] ? project : "session", w - textX - pad,
-                                           EpdFontFamily::BOLD)
-                        .c_str(),
-                    true, EpdFontFamily::BOLD);
+  renderer.drawText(
+      UI_10_FONT_ID, textX, y + (kGlyphPx - line10) / 2,
+      renderer.truncatedText(UI_10_FONT_ID, project[0] ? project : "session", w - textX - pad, EpdFontFamily::BOLD)
+          .c_str(),
+      true, EpdFontFamily::BOLD);
   y += (g ? kGlyphPx : line10) + 8;
 
   // Compact one-line meta: agent · model · state (· elapsed).
@@ -971,7 +1008,10 @@ void AgentDashboardActivity::renderDetail() {
   const int awn = collectAwaiting(aw, kAwaitingCap);
   int awIdx = -1;
   for (int i = 0; i < awn; i++)
-    if (selectedSid[0] && strcmp(aw[i].sid, selectedSid) == 0) { awIdx = i; break; }
+    if (selectedSid[0] && strcmp(aw[i].sid, selectedSid) == 0) {
+      awIdx = i;
+      break;
+    }
   const bool awaiting = (awIdx >= 0);
   const bool optMode = awaiting && aw[awIdx].isFocused && aw[awIdx].isOption && aw[awIdx].optionCount > 0;
   char optLabels[8][80];
@@ -1073,8 +1113,7 @@ void AgentDashboardActivity::renderDetail() {
   // Hint bar. OK selects the highlighted option only once scrolled to the
   // decision (atBottom); the heading nudges the user to scroll down to it.
   const bool atBottom = detailScroll >= detailMaxScroll;
-  const auto labels =
-      mappedInput.mapLabels("Back", (awaiting && atBottom) ? "Select" : "", "Up", "Down");
+  const auto labels = mappedInput.mapLabels("Back", (awaiting && atBottom) ? "Select" : "", "Up", "Down");
   GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
   renderer.displayBuffer();
 }

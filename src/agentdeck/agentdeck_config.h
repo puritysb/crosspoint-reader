@@ -16,18 +16,26 @@
 namespace AgentDeckCfg {
 
 // ===== Network / mDNS =====
-constexpr uint16_t    BRIDGE_DEFAULT_PORT = 9120;
-constexpr uint16_t    BRIDGE_PORT_MAX     = 9139;
-constexpr const char* MDNS_SERVICE        = "_agentdeck";
-constexpr const char* MDNS_PROTO          = "_tcp";
-constexpr const char* FIRMWARE_VERSION    = "0.1.1";
-constexpr uint8_t     PROTOCOL_REVISION   = 2;
+constexpr uint16_t BRIDGE_DEFAULT_PORT = 9120;
+constexpr uint16_t BRIDGE_PORT_MAX = 9139;
+constexpr const char* MDNS_SERVICE = "_agentdeck";
+constexpr const char* MDNS_PROTO = "_tcp";
+constexpr const char* FIRMWARE_VERSION = "0.1.1";
+constexpr uint8_t PROTOCOL_REVISION = 2;
+
+// UDP broadcast discovery (mDNS fallback). The daemon's BroadcastModule sends a
+// small JSON beacon here every 2 s; the device listens on the same port. mDNS
+// multicast (224.0.0.251:5353) is frequently filtered by home routers — AP
+// Isolation, IGMP Snooping without multicast enhancement, mesh hops — so this
+// unicast-friendly subnet broadcast carries the same discovery payload as a
+// safety net. See AgentDeck/bridge/src/broadcast.ts.
+constexpr uint16_t UDP_DISCOVERY_PORT = 9121;
 
 // ===== WebSocket =====
 constexpr uint32_t WS_RECONNECT_MIN_MS = 1000;
 constexpr uint32_t WS_RECONNECT_MAX_MS = 8000;
 constexpr uint32_t WS_PING_INTERVAL_MS = 15000;
-constexpr uint32_t WS_PONG_TIMEOUT_MS  = 30000;
+constexpr uint32_t WS_PONG_TIMEOUT_MS = 30000;
 
 // ===== mDNS discovery cadence =====
 constexpr uint32_t MDNS_QUERY_INTERVAL_MS = 5000;

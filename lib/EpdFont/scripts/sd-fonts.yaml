@@ -31,6 +31,17 @@
 #   Requires fonttools: pip install -r requirements.txt
 
 families:
+  # ── Korean ─────────────────────────────────────────────────────────────
+
+  - name: RIDIBatang
+    description: "리디바탕 — e-ink 최적화 한국어 세리프 (RIDI, OFL)"
+    intervals: reading,hangul
+    sizes: [12, 14, 16, 18]
+    styles:
+      regular: {url: "https://cdn.jsdelivr.net/gh/fonts-archive/RIDIBatang/RIDIBatang.otf"}
+    # bold/italic not distributed by RIDI; reader falls back to regular for
+    # those styles (typical for Korean body text anyway).
+
   # ── Serif ──────────────────────────────────────────────────────────────
 
   - name: Literata

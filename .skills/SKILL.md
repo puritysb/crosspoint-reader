@@ -611,6 +611,51 @@ origin      https://github.com/<your-username>/crosspoint-reader.git (fetch/push
 upstream    https://github.com/crosspoint-reader/crosspoint-reader.git (fetch/push)
 ```
 
+### AgentDeck Fork: Upstream Sync and Contribution
+
+**This repo is a personal fork.** `origin` = your fork (`puritysb/crosspoint-reader`),
+`upstream` = the parent project (`crosspoint-reader/crosspoint-reader`). Local `master`
+intentionally carries the private **"AgentDeck Decision Card"** product stack
+(`src/agentdeck/`, `AgentDashboardActivity`, agentdeck icons — ~2,700 lines) layered on
+top of upstream. **The AgentDeck code is fork-only and never goes upstream.**
+
+**Key facts**:
+- Upstream's default and stable line is **`master`** (not `main`); releases land there
+  (e.g. tag 1.4.1). Upstream also has `develop` (active dev, a few commits ahead) — only
+  pull that if you explicitly want pre-release work.
+- Our `master` is intentionally far ahead of `upstream/master` (the AgentDeck stack). That
+  divergence is expected, not drift.
+
+**Pulling future upstream updates** — use **merge, not rebase**:
+```bash
+./scripts/sync-upstream.sh           # fetch + report + merge upstream/master into master
+./scripts/sync-upstream.sh --check   # only report pending upstream commits, don't merge
+# then: pio run  (verify build) && git push origin master
+```
+Why merge: our `master` has ~20 AgentDeck commits on top; a rebase replays all of them and
+forces re-resolving the same conflicts every sync. A merge resolves once and preserves the
+AgentDeck history. Conflicts almost always hit only the **AgentDeck-touched shared files**
+(`ActivityManager`, `HomeActivity`, `WifiSelectionActivity`, theme files) — resolve by
+keeping BOTH sides. New `src/agentdeck/*` files never conflict.
+
+**Contributing a general feature back to upstream** (e.g. EPUB/rendering/font work, NOT
+AgentDeck): split it cleanly so the PR contains **zero AgentDeck files**:
+1. Keep EPUB/rendering changes and AgentDeck changes in **separate commits** from the start
+   (do not mix concerns in one commit — that makes extraction painful).
+2. Branch from upstream and cherry-pick only the relevant commits:
+   ```bash
+   git checkout -b feature/<name>-upstream upstream/master
+   git cherry-pick <epub-commit> [<font-commit> ...]   # exclude AgentDeck commits
+   ```
+3. If you touch a cache format, bump the version constant to **upstream's current value + 1**
+   (e.g. `SECTION_FILE_VERSION` in `lib/Epub/Epub/Section.cpp`).
+4. `pio run`, push to `origin`, open a **draft** PR to upstream (public third-party repo —
+   discuss with maintainers before marking ready):
+   ```bash
+   gh pr create --repo crosspoint-reader/crosspoint-reader \
+     --base master --head <your-user>:feature/<name>-upstream --draft
+   ```
+
 ### Git Operation Rules
 
 1. **Never assume branch names**:

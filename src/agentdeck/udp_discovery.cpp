@@ -51,7 +51,11 @@ bool udpPoll(BridgeInfo& out) {
   const int firstLen = udp.parsePacket();
   if (firstLen <= 0) return false;
 
-  char buf[UDP_BEACON_MAX_BYTES] = {0};
+  // Static (not stack): udpPoll runs only from the dashboard loop (single task, no
+  // reentrancy), so a 512 B beacon buffer lives in DRAM instead of blowing the
+  // Resource-Protocol <256 B stack-local budget. Zeroed each call before reuse.
+  static char buf[UDP_BEACON_MAX_BYTES];
+  buf[0] = '\0';
   int lastRead = 0;
   int parsedLen = firstLen;
 

@@ -79,17 +79,20 @@ as long as the exact `cp-original` / `cp-translation` token appears.
 
 ## Producer-side configuration (book_translator pipeline)
 
-When generating EPUBs from the `book_translator` pipeline (see `~/github/OpenClaw/`),
-configure the translation tool so its output emits the marker classes above:
+Bilingual EPUBs are produced **off-device** by the `book_translator` pipeline in
+the OpenClaw repo (`~/github/OpenClaw/`), which finds the source, translates it
+with **GLM 5.2** (Zhipu AI, OpenAI-compatible chat API), and assembles the EPUB.
+See [bilingual-pipeline.md](./bilingual-pipeline.md) for the full request →
+translate → deliver flow (Booklore + Calibre Content Server → OPDS → device).
 
-- **DocuTranslate** (recommended): use `insert_mode="append"` (or `"prepend"`) with
-  `original_class="cp-original"` and `translation_class="cp-translation"`. If the
-  tool's options do not allow custom class names, post-process its output with a
-  single regex pass to rename whatever classes it emits.
-- **TranslateBooksWithLLMs (TBL)**: enable bilingual mode, then run a post-processor
-  that adds the `cp-*` class tokens to each half of every emitted pair.
-- **Ebook-Translator (Calibre plugin)**: in bilingual output mode, override the
-  paragraph templates to use `cp-original` / `cp-translation`.
+Whatever tooling generates the output, the only hard requirement is that every
+paragraph pair emits the marker classes above — `cp-original` on the source
+paragraph and `cp-translation` on the translation, **block-level `<p>` only,
+token-exact**. The assembler should produce them directly; if you adapt an
+existing tool that emits other class names (e.g. DocuTranslate's
+`original_class`/`translation_class`, a TBL bilingual export, or the
+Ebook-Translator Calibre plugin), a single regex post-pass to rename its classes
+to `cp-original` / `cp-translation` is sufficient.
 
 A reference generator that produces a valid minimal bilingual EPUB with these markers
 lives at `scripts/generate_bilingual_test_epub.py`. Run it locally and push the result

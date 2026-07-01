@@ -988,15 +988,31 @@ void EpubReaderActivity::render(RenderLock&& lock) {
   {
     auto p = section->loadPageFromSectionFile();
     if (!p) {
-      LOG_ERR("ERS", "Failed to load page from SD - clearing section cache");
+      // A load can fail on a corrupt/partial SD cache. Normally we clear the cache and
+      // requestUpdate() to re-parse and retry, but bound the retries: if the page keeps
+      // failing, requestUpdate() would re-enter render() forever and trip the watchdog.
+      constexpr uint8_t MAX_PAGE_LOAD_RETRIES = 3;
+      if (pageLoadRetries >= MAX_PAGE_LOAD_RETRIES) {
+        LOG_ERR("ERS", "Page load failed %u times - giving up", pageLoadRetries);
+        renderer.drawCenteredText(UI_12_FONT_ID, 300, tr(STR_PAGE_LOAD_ERROR), true, EpdFontFamily::BOLD);
+        renderStatusBar();
+        renderer.displayBuffer();
+        automaticPageTurnActive = false;
+        showPendingSyncSaveError();
+        return;
+      }
+      pageLoadRetries++;
+      LOG_ERR("ERS", "Failed to load page from SD - clearing section cache (retry %u)", pageLoadRetries);
       section->clearCache();
       section.reset();
-      requestUpdate();  // Try again after clearing cache
-                        // TODO: prevent infinite loop if the page keeps failing to load for some reason
+      requestUpdate();  // Re-parse and try again after clearing cache
       automaticPageTurnActive = false;
       showPendingSyncSaveError();
       return;
     }
+
+    // Page loaded successfully - reset the failure guard.
+    pageLoadRetries = 0;
 
     // Collect footnotes from the loaded page
     currentPageFootnotes = std::move(p->footnotes);

@@ -15,6 +15,10 @@ class EpubReaderActivity final : public Activity {
   std::unique_ptr<Section> section = nullptr;
   int currentSpineIndex = 0;
   int nextPageNumber = 0;
+  // Consecutive page-load failures in render(). A failed load clears the section cache and
+  // requestUpdate()s to re-parse and retry; this counter bounds that so a perpetually failing
+  // page can't re-enter render() forever and trip the watchdog. Reset on a successful load.
+  uint8_t pageLoadRetries = 0;
   std::optional<uint16_t> pendingPageJump;
   // Set when navigating to a footnote href with a fragment (e.g. #note1).
   // Cleared on the next render after the new section loads and resolves it to a page.

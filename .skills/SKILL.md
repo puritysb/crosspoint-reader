@@ -940,14 +940,23 @@ rm -rf /path/to/sd/.crosspoint/epub_<hash>/sections/
 
 **Source**: `lib/Epub/Epub/Section.cpp`, `lib/Epub/Epub/BookMetadataCache.cpp`
 
-**Current Versions** (as of docs/file-formats.md):
+**Current Versions**:
 - `book.bin`: **Version 7** (metadata structure)
-- `section.bin`: **Version 25** (layout structure)
+- `section.bin` (upstream baseline): **Version 27** (layout structure)
+- `section.bin` (**this fork**): **Version 128** — the fork adds a `bilingualViewMode`
+  header field and numbers itself in the **reserved 128–255 range** instead of
+  `upstream + 1`. Upstream keeps incrementing 27→28→…; a same-numbered-but-different-layout
+  header would defeat the `version != SECTION_FILE_VERSION` invalidation and silently
+  feed stale caches to the reader. See the `SECTION_FILE_VERSION` comment in
+  `lib/Epub/Epub/Section.cpp`.
 
 **Version Increment Rules**:
 1. **ALWAYS increment version** BEFORE changing binary structure
 2. Version mismatch → Cache auto-invalidated and regenerated
 3. Document format changes in `docs/file-formats.md`
+4. **Fork rule**: keep the fork's `SECTION_FILE_VERSION` in the **128+ range** (bump
+   within it), never onto upstream's line. The upstream-contribution branch
+   (`bilingual-toggle-upstream`) keeps `upstream + 1` instead.
 
 **Example** (incrementing section format version):
 ```cpp

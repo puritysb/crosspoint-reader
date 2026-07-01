@@ -78,6 +78,25 @@ const char* getAttribute(const XML_Char** atts, const char* attrName) {
   return nullptr;
 }
 
+// ASCII-only lowercase (BCP 47 language subtags are ASCII); avoids locale-dependent tolower.
+inline char asciiLower(char c) { return (c >= 'A' && c <= 'Z') ? static_cast<char>(c + 32) : c; }
+
+// Case-insensitive comparison of the primary language subtag (the part before the first '-')
+// of two BCP 47 tags. Tags are case-insensitive per BCP 47, so "EN", "en", and "en-US" all
+// share the primary subtag "en". Operates on the raw C strings with no heap allocation, which
+// matters in the parse hot path (see String Policy in CLAUDE.md). Returns false if either
+// primary subtag is empty.
+bool primarySubtagEqualsIgnoreCase(const char* a, const char* b) {
+  if (!a || !b || !*a || !*b || *a == '-' || *b == '-') return false;
+  while (*a && *a != '-' && *b && *b != '-') {
+    if (asciiLower(*a) != asciiLower(*b)) return false;
+    ++a;
+    ++b;
+  }
+  // Equal only if both primary subtags terminated at the same point.
+  return (*a == '\0' || *a == '-') && (*b == '\0' || *b == '-');
+}
+
 // Returns true if the HTML element is a purely inline, non-navigable wrapper.
 // IDs on these elements are never meaningful navigation targets in epub content.
 // Reading-system converters (Kobo KePub, Calibre, etc.) frequently inject thousands
@@ -412,21 +431,15 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
       // Standard xml:lang / lang fallback.
       const char* lang = getAttribute(atts, "xml:lang");
       if (!lang || lang[0] == '\0') lang = getAttribute(atts, "lang");
-      if (lang && lang[0] != '\0') {
+      // Guard lang[0] != '-' so a malformed tag with an empty primary subtag ("-x") is ignored.
+      if (lang && lang[0] != '\0' && lang[0] != '-') {
         const std::string& sourceLang = self->epub->getLanguage();
         if (!sourceLang.empty()) {
-          // Compare primary subtags only ("en-US" → "en") so regional variants don't trip.
-          const char* dash = strchr(lang, '-');
-          const std::string primaryLang(lang, dash ? static_cast<size_t>(dash - lang) : strlen(lang));
-          const char* srcDash = strchr(sourceLang.c_str(), '-');
-          const std::string primarySrc(sourceLang.c_str(),
-                                       srcDash ? static_cast<size_t>(srcDash - sourceLang.c_str()) : sourceLang.size());
-          if (!primaryLang.empty()) {
-            if (primaryLang == primarySrc) {
-              isOriginal = true;
-            } else {
-              isTranslation = true;
-            }
+          // Case-insensitive primary-subtag match ("en-US" vs "EN" → match), no allocation.
+          if (primarySubtagEqualsIgnoreCase(lang, sourceLang.c_str())) {
+            isOriginal = true;
+          } else {
+            isTranslation = true;
           }
         }
       }

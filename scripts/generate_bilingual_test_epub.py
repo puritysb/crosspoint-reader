@@ -8,13 +8,20 @@ ChapterHtmlSlimParser's bilingual override path. Long-press Confirm (when bound 
 Bilingual Toggle in Settings → Controls) cycles Both → Original → Translation and
 re-parses the current section.
 
-Stdlib only — no Pillow/bs4/etc. Run:
+The parser is a hybrid: explicit cp-* class tokens win, then the standard
+xml:lang attribute (vs the publication's dc:language) is used as a fallback.
+Use --mode to exercise each path:
 
-    python3 scripts/generate_bilingual_test_epub.py [output.epub]
+    python3 scripts/generate_bilingual_test_epub.py                 # cp-* (default)
+    python3 scripts/generate_bilingual_test_epub.py --mode lang     # xml:lang only (bookfere-style)
+    python3 scripts/generate_bilingual_test_epub.py --mode both     # cp-* + xml:lang
+    python3 scripts/generate_bilingual_test_epub.py --mode none     # plain (toggle no-op)
 
-The default output is test/epubs/bilingual-sample.epub.
+Stdlib only — no Pillow/bs4/etc. The default output is test/epubs/bilingual-sample.epub
+(or bilingual-sample-<mode>.epub when --mode is given).
 """
 
+import argparse
 import os
 import sys
 import uuid
@@ -22,6 +29,10 @@ import zipfile
 from pathlib import Path
 
 DEFAULT_OUTPUT = Path(__file__).parent.parent / "test" / "epubs" / "bilingual-sample.epub"
+
+# Source language is "en" (matches dc:language below); translation is "ko".
+SOURCE_LANG = "en"
+TRANSLATION_LANG = "ko"
 
 # A handful of public-domain (Project Gutenberg) paragraphs with their Korean
 # glosses. Kept short so the EPUB renders fast on the X3/X4. Real pipelines
@@ -50,7 +61,7 @@ SAMPLE_PARAGRAPHS = [
 ]
 
 
-def build_chapter_xhtml(title: str, pairs) -> str:
+def build_chapter_xhtml(title: str, pairs, mode: str = "cp") -> str:
     parts = [
         '<?xml version="1.0" encoding="utf-8"?>',
         '<!DOCTYPE html>',
@@ -61,16 +72,35 @@ def build_chapter_xhtml(title: str, pairs) -> str:
         '<body>',
     ]
     for original, translation in pairs:
-        parts.append(f'<p class="cp-original">{original}</p>')
-        parts.append(f'<p class="cp-translation">{translation}</p>')
+        o_open, t_open = _paragraph_openers(mode)
+        parts.append(f"{o_open}{original}</p>")
+        parts.append(f"{t_open}{translation}</p>")
     parts.append("</body></html>")
     return "".join(parts)
 
 
-def build_epub(output_path: Path) -> None:
+def _paragraph_openers(mode: str):
+    """Return (<p-opener for source>, <p-opener for translation>) for the mode."""
+    if mode == "cp":
+        return (f'<p class="cp-original">', f'<p class="cp-translation">')
+    if mode == "lang":
+        # Standard xml:lang only — bookfere/Ebook-Translator style. The parser
+        # falls back to this when cp-* tokens are absent.
+        return (f'<p xml:lang="{SOURCE_LANG}">', f'<p xml:lang="{TRANSLATION_LANG}">')
+    if mode == "both":
+        # cp-* tokens + xml:lang. cp-* wins; xml:lang adds accessibility.
+        return (f'<p class="cp-original" xml:lang="{SOURCE_LANG}">',
+                f'<p class="cp-translation" xml:lang="{TRANSLATION_LANG}">')
+    if mode == "none":
+        # Plain paragraphs — toggle should be a no-op.
+        return ("<p>", "<p>")
+    raise ValueError(f"unknown mode: {mode!r}")
+
+
+def build_epub(output_path: Path, mode: str = "cp") -> None:
     output_path.parent.mkdir(parents=True, exist_ok=True)
     book_uid = str(uuid.uuid4())
-    title = "Bilingual Sample"
+    title = "Bilingual Sample" if mode == "cp" else f"Bilingual Sample ({mode})"
 
     with zipfile.ZipFile(output_path, "w", zipfile.ZIP_DEFLATED) as z:
         # 1. mimetype (uncompressed, first entry — EPUB spec)
@@ -124,18 +154,25 @@ def build_epub(output_path: Path) -> None:
         # 5. OEBPS/chapter1.xhtml — the actual content with cp-original / cp-translation markers
         z.writestr(
             "OEBPS/chapter1.xhtml",
-            build_chapter_xhtml("Chapter 1", SAMPLE_PARAGRAPHS),
+            build_chapter_xhtml("Chapter 1", SAMPLE_PARAGRAPHS, mode=mode),
         )
 
-    print(f"wrote {output_path} ({output_path.stat().st_size} bytes)")
+    print(f"wrote {output_path} ({output_path.stat().st_size} bytes) [mode={mode}]")
 
 
 def main() -> int:
-    if any(arg in ("-h", "--help") for arg in sys.argv[1:]):
-        print(__doc__)
-        return 0
-    output = Path(sys.argv[1]) if len(sys.argv) > 1 else DEFAULT_OUTPUT
-    build_epub(output)
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("output", nargs="?", type=Path, default=None,
+                    help="output .epub path (default: test/epubs/bilingual-sample[-<mode>].epub)")
+    ap.add_argument("--mode", choices=["cp", "lang", "both", "none"], default="cp",
+                    help="marker style: cp=cp-* classes (default), lang=xml:lang only, "
+                         "both=cp-* + xml:lang, none=plain (toggle no-op)")
+    args = ap.parse_args()
+    output = args.output
+    if output is None:
+        output = DEFAULT_OUTPUT if args.mode == "cp" else DEFAULT_OUTPUT.with_name(
+            f"bilingual-sample-{args.mode}.epub")
+    build_epub(output, mode=args.mode)
     return 0
 
 

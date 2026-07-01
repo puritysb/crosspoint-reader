@@ -390,12 +390,47 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
 
   // Skip elements with display:none before all fast paths (tables, links, etc.).
   // Bilingual override: when the user picks Original-only / Translation-only, paragraphs marked
-  // with the complementary class are treated as display:none here so the existing skip path drops
-  // them. Markers expected: class="cp-original" (source text) and class="cp-translation".
-  // Books without these markers are unaffected (BILINGUAL_BOTH = no-op).
+  // as the complementary role are treated as display:none here so the existing skip path drops
+  // them. Marker resolution is a hybrid so the reader is interoperable with standard-conscious
+  // producers (bookfere, etc.) AND with this repo's own cp-* pipeline:
+  //
+  //   1. Explicit class tokens win first — class="cp-original" / class="cp-translation"
+  //      (token-exact, see hasCssClass). This is the unambiguous path used by our book_translator.
+  //   2. Otherwise, fall back to the W3C/DAISY standard xml:lang attribute. A paragraph whose
+  //      primary language subtag matches the publication's dc:language is the source; any other
+  //      language is treated as the translation. This makes EPUBs that only carry xml:lang work
+  //      without a post-processing pass.
+  //   3. Books with neither marker are unaffected (BILINGUAL_BOTH = no-op).
+  //
+  // Edge case (documented limitation): a foreign-language quotation inside a monolingual book
+  // (e.g. a French passage in an English novel, marked xml:lang="fr") will be classified as a
+  // translation and hidden in Translation-only mode. cp-* override avoids this for our pipeline.
   if (self->bilingualViewMode != 0 /* != BILINGUAL_BOTH */) {
-    const bool isOriginal = hasCssClass(classAttr, "cp-original");
-    const bool isTranslation = hasCssClass(classAttr, "cp-translation");
+    bool isOriginal = hasCssClass(classAttr, "cp-original");
+    bool isTranslation = hasCssClass(classAttr, "cp-translation");
+    if (!isOriginal && !isTranslation) {
+      // Standard xml:lang / lang fallback.
+      const char* lang = getAttribute(atts, "xml:lang");
+      if (!lang || lang[0] == '\0') lang = getAttribute(atts, "lang");
+      if (lang && lang[0] != '\0') {
+        const std::string& sourceLang = self->epub->getLanguage();
+        if (!sourceLang.empty()) {
+          // Compare primary subtags only ("en-US" → "en") so regional variants don't trip.
+          const char* dash = strchr(lang, '-');
+          const std::string primaryLang(lang, dash ? static_cast<size_t>(dash - lang) : strlen(lang));
+          const char* srcDash = strchr(sourceLang.c_str(), '-');
+          const std::string primarySrc(sourceLang.c_str(),
+                                       srcDash ? static_cast<size_t>(srcDash - sourceLang.c_str()) : sourceLang.size());
+          if (!primaryLang.empty()) {
+            if (primaryLang == primarySrc) {
+              isOriginal = true;
+            } else {
+              isTranslation = true;
+            }
+          }
+        }
+      }
+    }
     if (self->bilingualViewMode == 1 /* ORIGINAL_ONLY */ && isTranslation) {
       cssStyle.display = CssDisplay::None;
       cssStyle.defined.display = 1;

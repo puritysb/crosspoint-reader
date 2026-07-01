@@ -19,6 +19,54 @@ Matching is **token-exact** (whitespace-separated). A paragraph marked
 `class="chapter1 cp-original first"` is treated as original; `class="my-cp-original"`
 is **not** matched (it would be invisible to the toggle and always rendered).
 
+### Marker resolution is a hybrid (cp-* wins, xml:lang fallback)
+
+As of v28 the toggle resolves a paragraph's role with a two-tier strategy so the
+reader is interoperable with the wider bilingual-EPUB ecosystem, not just this
+repo's `book_translator` pipeline:
+
+1. **Explicit cp-* tokens win first.** `class="cp-original"` / `class="cp-translation"`
+   (token-exact, see `hasCssClass`). This is the unambiguous path used by our
+   `book_translator` and the reference generator
+   (`scripts/generate_bilingual_test_epub.py`).
+2. **Standard `xml:lang` fallback.** When neither cp-* token is present, the
+   parser reads the W3C/DAISY `xml:lang` attribute (or legacy `lang`). A
+   paragraph whose **primary language subtag** matches the publication's
+   `dc:language` (OPF) is the source; any other language is treated as the
+   translation. This makes EPUBs from producers like
+   [bookfere/Ebook-Translator-Calibre-Plugin](https://github.com/bookfere/Ebook-Translator-Calibre-Plugin)
+   — which set `xml:lang` rather than our private classes — work without a
+   conversion pass.
+3. **Neither marker** → the paragraph is unaffected (toggle is a no-op on plain
+   monolingual books).
+
+This means a producer can pick whichever standard it already follows:
+
+```html
+<!-- Option A: explicit cp-* tokens (book_translator default) -->
+<p class="cp-original">Hello world.</p>
+<p class="cp-translation">안녕하세요, 세계.</p>
+
+<!-- Option B: W3C xml:lang only (bookfere/Standard Ebooks style) -->
+<p xml:lang="en">Hello world.</p>
+<p xml:lang="ko">안녕하세요, 세계.</p>
+
+<!-- Option C: both — cp-* wins, xml:lang adds screen-reader accessibility -->
+<p class="cp-original" xml:lang="en">Hello world.</p>
+<p class="cp-translation" xml:lang="ko">안녕하세요, 세계.</p>
+```
+
+Primary-subtag matching (`en-US` → `en`) keeps regional variants from tripping
+the comparison.
+
+#### Documented edge case
+
+A foreign-language quotation inside a monolingual book (e.g. a French passage
+in an English novel, marked `xml:lang="fr"`) will be classified as a translation
+and hidden in Translation-only mode. cp-* override avoids this for our pipeline;
+books that rely on the xml:lang path should set `dc:language` to the work's true
+primary language so the source/translation split is unambiguous.
+
 ## Toggle behavior
 
 The reader cycles the `Bilingual View Mode` setting on long-press Confirm when the

@@ -151,8 +151,8 @@ class CrossPointSettings {
   };
 
   // Bilingual EPUB view modes. Affects rendering of EPUBs whose paragraphs carry
-  // class="cp-original" / class="cp-translation" markers (produced by the book_translator
-  // pipeline). Both: render every paragraph (default). OriginalOnly: drop cp-translation.
+  // class="cp-original" / class="cp-translation" markers (or the xml:lang fallback).
+  // Both: render every paragraph (default). OriginalOnly: drop cp-translation.
   // TranslationOnly: drop cp-original. Books without the markers are unaffected.
   enum BILINGUAL_VIEW_MODE {
     BILINGUAL_BOTH = 0,

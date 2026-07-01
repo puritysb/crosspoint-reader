@@ -392,10 +392,10 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
   // Bilingual override: when the user picks Original-only / Translation-only, paragraphs marked
   // as the complementary role are treated as display:none here so the existing skip path drops
   // them. Marker resolution is a hybrid so the reader is interoperable with standard-conscious
-  // producers (bookfere, etc.) AND with this repo's own cp-* pipeline:
+  // producers (bookfere, etc.) AND with explicit cp-* markers:
   //
   //   1. Explicit class tokens win first — class="cp-original" / class="cp-translation"
-  //      (token-exact, see hasCssClass). This is the unambiguous path used by our book_translator.
+  //      (token-exact, see hasCssClass). This is the unambiguous path used by the reference generator.
   //   2. Otherwise, fall back to the W3C/DAISY standard xml:lang attribute. A paragraph whose
   //      primary language subtag matches the publication's dc:language is the source; any other
   //      language is treated as the translation. This makes EPUBs that only carry xml:lang work

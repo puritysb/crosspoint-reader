@@ -35,8 +35,8 @@ SOURCE_LANG = "en"
 TRANSLATION_LANG = "ko"
 
 # A handful of public-domain (Project Gutenberg) paragraphs with their Korean
-# glosses. Kept short so the EPUB renders fast on the X3/X4. Real pipelines
-# (book_translator) will produce these from any source via DocuTranslate/TBL.
+# glosses. Kept short so the EPUB renders fast on the X3/X4. A real translation
+# pipeline would produce these from any source book.
 SAMPLE_PARAGRAPHS = [
     (
         "It is a truth universally acknowledged, that a single man in possession of a good fortune, must be in want of a wife.",
@@ -126,7 +126,7 @@ def build_epub(output_path: Path, mode: str = "cp") -> None:
             f'<dc:identifier id="bookid">urn:uuid:{book_uid}</dc:identifier>'
             f"<dc:title>{title}</dc:title>"
             "<dc:language>en</dc:language>"
-            "<dc:creator>OpenClaw book_translator</dc:creator>"
+            "<dc:creator>CrossPoint bilingual sample generator</dc:creator>"
             "</metadata>"
             "<manifest>"
             '<item id="chapter1" href="chapter1.xhtml" media-type="application/xhtml+xml"/>'

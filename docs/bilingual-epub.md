@@ -3,7 +3,7 @@
 CrossPoint renders bilingual EPUBs (original + translation in the same file) with an
 in-reader toggle that swaps between **Both**, **Original only**, and **Translation only**
 without leaving the page. This document defines the marker classes the parser looks for
-and how the book_translator pipeline (or any other producer) should emit them.
+and how a translation pipeline (or any other producer) should emit them.
 
 ## Marker classes
 
@@ -22,13 +22,12 @@ is **not** matched (it would be invisible to the toggle and always rendered).
 ### Marker resolution is a hybrid (cp-* wins, xml:lang fallback)
 
 As of v28 the toggle resolves a paragraph's role with a two-tier strategy so the
-reader is interoperable with the wider bilingual-EPUB ecosystem, not just this
-repo's `book_translator` pipeline:
+reader is interoperable with the wider bilingual-EPUB ecosystem, not just one
+producer:
 
 1. **Explicit cp-* tokens win first.** `class="cp-original"` / `class="cp-translation"`
-   (token-exact, see `hasCssClass`). This is the unambiguous path used by our
-   `book_translator` and the reference generator
-   (`scripts/generate_bilingual_test_epub.py`).
+   (token-exact, see `hasCssClass`). This is the unambiguous path used by the
+   reference generator (`scripts/generate_bilingual_test_epub.py`).
 2. **Standard `xml:lang` fallback.** When neither cp-* token is present, the
    parser reads the W3C/DAISY `xml:lang` attribute (or legacy `lang`). A
    paragraph whose **primary language subtag** matches the publication's
@@ -43,7 +42,7 @@ repo's `book_translator` pipeline:
 This means a producer can pick whichever standard it already follows:
 
 ```html
-<!-- Option A: explicit cp-* tokens (book_translator default) -->
+<!-- Option A: explicit cp-* tokens (reference generator default) -->
 <p class="cp-original">Hello world.</p>
 <p class="cp-translation">안녕하세요, 세계.</p>
 
@@ -125,10 +124,10 @@ as long as the exact `cp-original` / `cp-translation` token appears.
   wired. If a translation tool emits `<span class="cp-original">` inside a paragraph,
   the toggle has no effect on it.
 
-## Producer-side configuration (book_translator pipeline)
+## Producer-side configuration
 
-When generating EPUBs from the `book_translator` pipeline (see `~/github/OpenClaw/`),
-configure the translation tool so its output emits the marker classes above:
+When generating EPUBs from a translation pipeline, configure the tool so its
+output emits the marker classes above:
 
 - **DocuTranslate** (recommended): use `insert_mode="append"` (or `"prepend"`) with
   `original_class="cp-original"` and `translation_class="cp-translation"`. If the

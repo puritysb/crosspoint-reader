@@ -10,9 +10,15 @@
 #include "parsers/ChapterHtmlSlimParser.h"
 
 namespace {
-// v28: bilingualViewMode stored in header so mode changes invalidate per-section cache.
-//      Words NFC-composed at layout time (carried over from v27).
-constexpr uint8_t SECTION_FILE_VERSION = 28;
+// Fork-private section cache version (reserved range 128-255, high bit = fork-modified).
+// This fork layers the bilingualViewMode header field on top of upstream (NFC-composed
+// words carried over from upstream v27). Upstream's SECTION_FILE_VERSION is at 27 and
+// keeps incrementing; numbering the fork build at 128 guarantees a future upstream bump
+// can never collide with ours -- a same-number/different-layout header would defeat the
+// `version != SECTION_FILE_VERSION` invalidation check below and silently feed stale
+// caches to the reader. The upstream PR keeps this at 28 (upstream 27 + 1); only the
+// fork uses the 128+ range.
+constexpr uint8_t SECTION_FILE_VERSION = 128;
 constexpr uint32_t HEADER_SIZE = sizeof(uint8_t) + sizeof(int) + sizeof(float) + sizeof(bool) + sizeof(uint8_t) +
                                  sizeof(uint16_t) + sizeof(uint16_t) + sizeof(uint16_t) + sizeof(bool) + sizeof(bool) +
                                  sizeof(uint8_t) + sizeof(bool) + sizeof(uint8_t) + sizeof(uint32_t) +

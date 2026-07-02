@@ -52,6 +52,10 @@ class ChapterHtmlSlimParser {
   bool embeddedStyle;
   uint8_t imageRendering;
   uint8_t bilingualViewMode;
+  // Set during parsing when any element carries a bilingual role marker (cp-* class or a
+  // content-level xml:lang). When false, the layout is identical in every bilingual view
+  // mode, so the section cache can be reused across mode toggles (see Section.cpp).
+  bool bilingualMarkersSeen = false;
   std::string contentBase;
   std::string imageBasePath;
   int imageCounter = 0;
@@ -146,6 +150,7 @@ class ChapterHtmlSlimParser {
 
   ~ChapterHtmlSlimParser() = default;
   bool parseAndBuildPages();
+  bool sawBilingualMarkers() const { return bilingualMarkersSeen; }
   void addLineToPage(std::shared_ptr<TextBlock> line);
   const std::vector<std::pair<std::string, uint16_t>>& getAnchors() const { return anchorData; }
 };

@@ -29,5 +29,8 @@ bool mdnsPoll(BridgeInfo& out);
 // Force the next poll to query immediately.
 void mdnsRefresh();
 
+// Best-effort cleanup of an in-flight async search. Call before MDNS.end().
+void mdnsStop();
+
 }  // namespace Net
 }  // namespace AgentDeck

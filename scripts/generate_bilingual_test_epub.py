@@ -65,7 +65,10 @@ def build_chapter_xhtml(title: str, pairs, mode: str = "cp") -> str:
     parts = [
         '<?xml version="1.0" encoding="utf-8"?>',
         '<!DOCTYPE html>',
-        '<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops">',
+        # xml:lang on <html> mirrors real-world EPUBs (accessibility checkers require it).
+        # Regression guard: the parser must NOT classify the document root as a bilingual
+        # role marker, or Translation-only mode would blank the whole chapter.
+        f'<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops" xml:lang="{SOURCE_LANG}" lang="{SOURCE_LANG}">',
         '<head><meta charset="utf-8"/><title>',
         title,
         '</title></head>',

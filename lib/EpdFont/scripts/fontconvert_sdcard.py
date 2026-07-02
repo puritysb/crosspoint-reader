@@ -127,6 +127,72 @@ def resolve_intervals(preset_str):
     return merged
 
 
+def load_coverage(path: str) -> set[int] | None:
+    """Load a codepoint coverage file for subsetting.
+
+    The file is one codepoint per line, either as hex (0x3042, 3042, U+3042)
+    or as a single literal character. Blank lines and # comments are ignored.
+
+    Returns the set of codepoints, or None if path is empty/None (no subsetting).
+    """
+    if not path:
+        return None
+    cps: set[int] = set()
+    with open(path, "r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            if line.lower().startswith("u+"):
+                cps.add(int(line[2:], 16))
+            elif line.lower().startswith("0x"):
+                cps.add(int(line[2:], 16))
+            else:
+                try:
+                    cps.add(int(line, 16))
+                except ValueError:
+                    # Literal character(s): take each codepoint in the string.
+                    for ch in line:
+                        cps.add(ord(ch))
+    return cps
+
+
+def apply_coverage(intervals: list[tuple[int, int]],
+                  coverage: set[int] | None) -> list[tuple[int, int]]:
+    """Intersect resolved intervals with a coverage set.
+
+    Without coverage: returns intervals unchanged. With coverage: re-fences
+    each interval so only codepoints present in the coverage set survive,
+    producing the minimal sub-intervals. This is how a book-specific font
+    stays small enough for the ESP32-C3 — e.g. 吾輩は猫である uses ~3000 of
+    the ~6000 IPAexMincho kanji and ~2000 of 11000 Hangul syllables, so the
+    merged font is ~5K glyphs instead of ~17K.
+    """
+    if coverage is None:
+        return intervals
+    out: list[tuple[int, int]] = []
+    for start, end in intervals:
+        run_start = None
+        for cp in range(start, end + 1):
+            if cp in coverage:
+                if run_start is None:
+                    run_start = cp
+            else:
+                if run_start is not None:
+                    out.append((run_start, cp - 1))
+                    run_start = None
+        if run_start is not None:
+            out.append((run_start, end))
+    # Merge adjacent runs that the per-interval split may have left abutting.
+    merged = []
+    for start, end in out:
+        if merged and start <= merged[-1][1] + 1:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], end))
+        else:
+            merged.append((start, end))
+    return merged
+
+
 GlyphProps = namedtuple("GlyphProps", [
     "width", "height", "advance_x", "left", "top", "data_length", "data_offset", "code_point"
 ])
@@ -899,6 +965,11 @@ def main():
                         help="Output directory for multi-size mode.")
     parser.add_argument("--list-presets", action="store_true",
                         help="List available interval presets and exit.")
+    parser.add_argument("--coverage-file", dest="coverage_file", default=None,
+                        help="Subset to only codepoints listed in this file "
+                             "(one hex codepoint per line: 0x3042, U+3042, or a "
+                             "literal char). Lets a book-specific merged font "
+                             "stay small enough for ESP32-C3 RAM.")
 
     # Multi-style mode: per-style font file arguments (generates v4 .cpfont)
     parser.add_argument("--regular", dest="font_regular",
@@ -958,6 +1029,19 @@ def main():
         sys.exit(1)
 
     intervals = resolve_intervals(args.intervals)
+
+    # Optional subsetting: restrict the resolved intervals to only codepoints
+    # listed in the coverage file. Applied BEFORE per-style font validation so
+    # both primary and fallback fonts see the same (already small) set.
+    if args.coverage_file:
+        coverage = load_coverage(args.coverage_file)
+        if coverage is not None:
+            before = sum(e - s + 1 for s, e in intervals)
+            intervals = apply_coverage(intervals, coverage)
+            after = sum(e - s + 1 for s, e in intervals)
+            print(f"Coverage subset: {before} → {after} codepoints "
+                  f"({len(intervals)} intervals) from {args.coverage_file}",
+                  file=sys.stderr)
 
     # Determine sizes
     if args.sizes:

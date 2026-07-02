@@ -13,12 +13,20 @@ namespace {
 // Fork-private section cache version (reserved range 128-255, high bit = fork-modified).
 // This fork layers the bilingualViewMode header field on top of upstream (NFC-composed
 // words carried over from upstream v27). Upstream's SECTION_FILE_VERSION is at 27 and
-// keeps incrementing; numbering the fork build at 128 guarantees a future upstream bump
-// can never collide with ours -- a same-number/different-layout header would defeat the
-// `version != SECTION_FILE_VERSION` invalidation check below and silently feed stale
-// caches to the reader. The upstream PR keeps this at 28 (upstream 27 + 1); only the
-// fork uses the 128+ range.
-constexpr uint8_t SECTION_FILE_VERSION = 128;
+// keeps incrementing; numbering the fork build in the 128+ range guarantees a future
+// upstream bump can never collide with ours -- a same-number/different-layout header
+// would defeat the `version != SECTION_FILE_VERSION` invalidation check below and
+// silently feed stale caches to the reader. The upstream PR keeps this at 28
+// (upstream 27 + 1); only the fork uses the 128+ range.
+// v129: xml:lang fallback no longer classifies <html>/<body> (v128 caches built in
+// Original/Translation-only mode could be blank), and marker-free chapters store
+// BILINGUAL_MODE_ANY so mode toggles reuse them.
+constexpr uint8_t SECTION_FILE_VERSION = 129;
+
+// Sentinel patched into the header's bilingualViewMode field when the chapter contains no
+// bilingual role markers: its layout is identical in every view mode, so loadSectionFile
+// accepts the cache regardless of the currently requested mode.
+constexpr uint8_t BILINGUAL_MODE_ANY = 0xFF;
 constexpr uint32_t HEADER_SIZE = sizeof(uint8_t) + sizeof(int) + sizeof(float) + sizeof(bool) + sizeof(uint8_t) +
                                  sizeof(uint16_t) + sizeof(uint16_t) + sizeof(uint16_t) + sizeof(bool) + sizeof(bool) +
                                  sizeof(uint8_t) + sizeof(bool) + sizeof(uint8_t) + sizeof(uint32_t) +
@@ -125,13 +133,16 @@ bool Section::loadSectionFile(const int fontId, const float lineCompression, con
     serialization::readPod(file, fileImageRendering);
     serialization::readPod(file, fileFocusReadingEnabled);
     serialization::readPod(file, fileBilingualViewMode);
+    // BILINGUAL_MODE_ANY marks a chapter with no bilingual markers: every view mode lays
+    // out identically, so the cache stays valid across mode toggles.
+    bilingualModeAgnostic = (fileBilingualViewMode == BILINGUAL_MODE_ANY);
 
     if (fontId != fileFontId || lineCompression != fileLineCompression ||
         extraParagraphSpacing != fileExtraParagraphSpacing || paragraphAlignment != fileParagraphAlignment ||
         viewportWidth != fileViewportWidth || viewportHeight != fileViewportHeight ||
         hyphenationEnabled != fileHyphenationEnabled || embeddedStyle != fileEmbeddedStyle ||
         imageRendering != fileImageRendering || focusReadingEnabled != fileFocusReadingEnabled ||
-        bilingualViewMode != fileBilingualViewMode) {
+        (!bilingualModeAgnostic && bilingualViewMode != fileBilingualViewMode)) {
       file.close();
       LOG_ERR("SCT", "Deserialization failed: Parameters do not match");
       clearCache();
@@ -311,8 +322,14 @@ bool Section::createSectionFile(const int fontId, const float lineCompression, c
     serialization::writePod(file, entry.listItemIndex);
   }
 
-  // Patch header with final pageCount, lutOffset, anchorMapOffset, paragraphLutOffset, and liLutOffset
-  file.seek(HEADER_SIZE - sizeof(uint32_t) * 4 - sizeof(pageCount));
+  // Patch header with the effective bilingual mode, final pageCount, lutOffset,
+  // anchorMapOffset, paragraphLutOffset, and liLutOffset. Marker existence is only known
+  // after parsing, so the mode field written by writeSectionFileHeader is downgraded to
+  // BILINGUAL_MODE_ANY here when the chapter turned out to be marker-free.
+  bilingualModeAgnostic = !visitor.sawBilingualMarkers();
+  const uint8_t effectiveBilingualMode = bilingualModeAgnostic ? BILINGUAL_MODE_ANY : bilingualViewMode;
+  file.seek(HEADER_SIZE - sizeof(uint32_t) * 4 - sizeof(pageCount) - sizeof(effectiveBilingualMode));
+  serialization::writePod(file, effectiveBilingualMode);
   serialization::writePod(file, pageCount);
   serialization::writePod(file, lutOffset);
   serialization::writePod(file, anchorMapOffset);

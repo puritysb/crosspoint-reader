@@ -25,6 +25,10 @@ class Section {
  public:
   uint16_t pageCount = 0;
   int currentPage = 0;
+  // True when this chapter contains no bilingual role markers, i.e. it renders identically
+  // in every bilingual view mode. Set by loadSectionFile/createSectionFile; the reader uses
+  // it to skip the section reset (and full re-parse) when the user cycles the view mode.
+  bool bilingualModeAgnostic = false;
 
   explicit Section(const std::shared_ptr<Epub>& epub, const int spineIndex, GfxRenderer& renderer)
       : epub(epub),

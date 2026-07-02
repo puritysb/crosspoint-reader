@@ -235,7 +235,7 @@ void HomeActivity::render(RenderLock&&) {
 
   // Build menu items dynamically
   std::vector<const char*> menuItems = {tr(STR_BROWSE_FILES), tr(STR_MENU_RECENT_BOOKS), tr(STR_FILE_TRANSFER),
-                                        "Agent Dashboard", tr(STR_SETTINGS_TITLE)};
+                                        tr(STR_AGENT_DASHBOARD), tr(STR_SETTINGS_TITLE)};
   std::vector<UIIcon> menuIcons = {Folder, Recent, Transfer, AgentMark, Settings};
 
   if (hasOpdsServers) {

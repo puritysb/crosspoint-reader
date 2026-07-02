@@ -377,8 +377,14 @@ void AgentDashboardActivity::loop() {
       requestUpdate();
     }
 
-    // Repaint only when the rendered state actually changed.
-    if (dashState == DashState::Connected) {
+    // Repaint only when the rendered state actually changed. Throttled: the loop
+    // runs with skipLoopDelay(), so an unthrottled check would re-hash all sessions,
+    // timeline entries, and usage strings under g_stateMutex thousands of times per
+    // second (pure CPU/power waste + mutex contention with the render task). The
+    // interval also coalesces rapid state_update bursts into ≤2 repaints/sec, which
+    // is all the e-ink panel can usefully show anyway.
+    if (dashState == DashState::Connected && millis() - lastSigCheckMs >= kSigCheckIntervalMs) {
+      lastSigCheckMs = millis();
       uint32_t sig = computeStateSignature();
       if (sig != lastSignature) {
         lastSignature = sig;
@@ -393,6 +399,7 @@ void AgentDashboardActivity::onExit() {
 
   AgentDeck::Net::wsDisconnect();
   AgentDeck::Net::udpStop();
+  AgentDeck::Net::mdnsStop();
   MDNS.end();
 
   if (WiFi.getMode() != WIFI_MODE_NULL) {
@@ -1042,9 +1049,16 @@ void AgentDashboardActivity::renderDetail() {
   const int listBottom = pageH - m.buttonHintsHeight - 8;
 
   // Flat line list. lineOpt: -1 normal, -2 heading (bold), >=0 = option index.
+  // Reserve the worst case up front (timeline entries × 3 wrap lines + decision
+  // block) — this repaints on every state change, and unreserved push_back growth
+  // fragments DRAM (CLAUDE.md rule 7).
+  const size_t maxLines = static_cast<size_t>(tlCount) * 3 + 2 + 4 + static_cast<size_t>(optCount > 0 ? optCount : 1);
   std::vector<std::string> lines;
   std::vector<int> lineFonts;
   std::vector<int> lineOpt;
+  lines.reserve(maxLines);
+  lineFonts.reserve(maxLines);
+  lineOpt.reserve(maxLines);
   for (int k = 0; k < tlCount; k++) {  // chronological
     const int fid = fontForText(SMALL_FONT_ID, tlText[k]);
     auto wrapped = renderer.wrappedText(fid, tlText[k], w - pad * 2 - 10, 3);

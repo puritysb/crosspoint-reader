@@ -787,13 +787,25 @@ void EpubReaderActivity::cycleBilingualMode() {
   SETTINGS.saveToFile();
   showBilingualMessage = true;
   bilingualMessageTime = millis();
-  // Drop the current section so the next render re-parses with the new mode. The v28
-  // header check invalidates the on-disk cache, so re-opening the chapter later still
-  // works without another manual reset.
   {
     RenderLock lock(*this);
-    section.reset();
-    nextPageNumber = 0;
+    if (section && section->bilingualModeAgnostic) {
+      // Chapter has no bilingual markers: its layout is identical in every mode and the
+      // section cache stores BILINGUAL_MODE_ANY, so keep the section (and the reading
+      // position) and only show the mode popup. Marker-bearing chapters elsewhere in the
+      // book still rebuild lazily on navigation via the header mode check.
+    } else {
+      // Drop the current section so the next render re-parses with the new mode; the
+      // header mode check invalidates the on-disk cache. Preserve the reading position
+      // the same way updateStatusBarSetting does: re-layout changes pagination, so the
+      // render path restores proportionally via cachedChapterTotalPageCount.
+      if (section) {
+        cachedSpineIndex = currentSpineIndex;
+        cachedChapterTotalPageCount = section->pageCount;
+        nextPageNumber = section->currentPage;
+      }
+      section.reset();
+    }
   }
   requestUpdate();
 }

@@ -12,8 +12,8 @@
 // interfere with the firmware's crash-report / RTC log buffer.
 //
 #include <Arduino.h>
+#include <HalStorage.h>
 #include <Logging.h>
-#include <SDCardManager.h>
 
 #include <cstdarg>
 #include <cstdio>
@@ -33,19 +33,22 @@ inline void line(const char* tag, const char* fmt, ...) {
   // Mirror to the serial logger (no-op channel on dead-USB units, but free).
   LOG_INF(tag, "%s", msg);
 
-  if (!SdMan.ready()) return;
+  if (!Storage.ready()) return;
 
-  // Open for append. SdFat oflags (O_WRITE/O_CREAT/O_APPEND) are the same ones
-  // SDCardManager uses elsewhere for writes.
-  FsFile f = SdMan.open(kLogPath, O_WRITE | O_CREAT | O_APPEND);
+  // Append via HalStorage so this write shares storageMutex with every other SD
+  // user. This runs on the loop task while the render task may be reading SD font
+  // glyphs; raw SdMan/FsFile access here would drive SdFat from two tasks at once
+  // and can trip the xTaskPriorityDisinherit panic (SdFat #518, see CLAUDE.md).
+  HalFile f = Storage.open(kLogPath, O_WRITE | O_CREAT | O_APPEND);
   if (!f) return;
 
   char outLine[208];
   const int n = snprintf(outLine, sizeof(outLine), "[%lu] %s: %s\n", static_cast<unsigned long>(millis()), tag, msg);
   if (n > 0) {
-    f.write(reinterpret_cast<const uint8_t*>(outLine), static_cast<size_t>(n < (int)sizeof(outLine) ? n : (int)sizeof(outLine) - 1));
+    f.write(reinterpret_cast<const uint8_t*>(outLine),
+            static_cast<size_t>(n < (int)sizeof(outLine) ? n : (int)sizeof(outLine) - 1));
   }
-  f.close();
+  // No explicit close: HalFile's destructor closes under the mutex (DESTRUCTOR_CLOSES_FILE).
 }
 
 }  // namespace AgentLog

@@ -424,10 +424,18 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
   // Edge case (documented limitation): a foreign-language quotation inside a monolingual book
   // (e.g. a French passage in an English novel, marked xml:lang="fr") will be classified as a
   // translation and hidden in Translation-only mode. cp-* override avoids this for our pipeline.
-  if (self->bilingualViewMode != 0 /* != BILINGUAL_BOTH */) {
+  //
+  // Detection runs in every mode (including BILINGUAL_BOTH) so the section cache can record
+  // whether this chapter is mode-sensitive at all; marker-free chapters lay out identically in
+  // every mode, letting Section skip a full re-parse when the user toggles the view mode.
+  {
     bool isOriginal = hasCssClass(classAttr, "cp-original");
     bool isTranslation = hasCssClass(classAttr, "cp-translation");
-    if (!isOriginal && !isTranslation) {
+    // The xml:lang fallback must never classify the document root: nearly every EPUB carries
+    // xml:lang on <html>/<body> (it is an accessibility requirement), and treating that as a
+    // role marker would display:none the whole chapter in Translation-only mode.
+    const bool isDocumentRoot = strcmp(name, "html") == 0 || strcmp(name, "body") == 0;
+    if (!isOriginal && !isTranslation && !isDocumentRoot) {
       // Standard xml:lang / lang fallback.
       const char* lang = getAttribute(atts, "xml:lang");
       if (!lang || lang[0] == '\0') lang = getAttribute(atts, "lang");
@@ -443,6 +451,9 @@ void XMLCALL ChapterHtmlSlimParser::startElement(void* userData, const XML_Char*
           }
         }
       }
+    }
+    if (isOriginal || isTranslation) {
+      self->bilingualMarkersSeen = true;
     }
     if (self->bilingualViewMode == 1 /* ORIGINAL_ONLY */ && isTranslation) {
       cssStyle.display = CssDisplay::None;
